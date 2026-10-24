@@ -31,9 +31,9 @@ final class HLSRelay {
             server.stateUpdateHandler = { state in Task { @MainActor in
                 guard !resumed else { return }
                 switch state {
-                case .ready: resumed = true; self.port = server.port?.rawValue ?? 0; c.resume()
-                case .failed(let error): resumed = true; c.resume(throwing: error)
-                case .cancelled: resumed = true; c.resume(throwing: CancellationError())
+                case .ready: resumed = true; server.stateUpdateHandler = nil; self.port = server.port?.rawValue ?? 0; c.resume()
+                case .failed(let error): resumed = true; server.stateUpdateHandler = nil; c.resume(throwing: error)
+                case .cancelled: resumed = true; server.stateUpdateHandler = nil; c.resume(throwing: CancellationError())
                 default: break
                 }
             } }

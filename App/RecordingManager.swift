@@ -244,6 +244,7 @@ final class RecordingManager: ObservableObject {
         Task {
             do {
                 let bridge = HLSRelay(source: source)
+                defer { if listenerRelay !== bridge { bridge.stop() } }
                 let local = try await bridge.start()
                 guard listenGeneration == generation else { bridge.stop(); return }
                 let asset = AVURLAsset(url: local)
