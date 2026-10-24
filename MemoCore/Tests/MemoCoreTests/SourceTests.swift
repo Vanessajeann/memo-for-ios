@@ -25,8 +25,14 @@ final class SourceTests: XCTestCase {
         XCTAssertEqual(Link.platform("https://douyin.com.attacker.example/live"), "媒体直链")
     }
     func testHeaderInjectionRejected() {
-        var s = Source(); s.url = "https://example.com/live"; s.cookie = "a=b\r\nInjected: yes"
-        XCTAssertThrowsError(try s.validated()) { XCTAssertEqual($0 as? MemoError, .invalidHeader) }
+        let fields: [WritableKeyPath<Source, String>] = [\.cookie, \.referer, \.agent]
+        for field in fields {
+            for newline in ["\r\n", "\n", "\r"] {
+                var s = Source(); s.url = "https://example.com/live"
+                s[keyPath: field] = "a=b" + newline + "Injected: yes"
+                XCTAssertThrowsError(try s.validated()) { XCTAssertEqual($0 as? MemoError, .invalidHeader) }
+            }
+        }
     }
     func testLimitEditAndDuplicate() throws {
         var list: [Source] = []
