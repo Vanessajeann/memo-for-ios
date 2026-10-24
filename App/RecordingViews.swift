@@ -60,7 +60,9 @@ struct RecordingLibraryView:View {
                 }
             }
             .sheet(item:$playing) { LocalRecordingPlayer(recording:$0) }
-            .sheet(item:$showingImage) { ImageGalleryView(initial:$0.url,files:files.filter(isImage)) }
+            .sheet(item:$showingImage) { item in
+                ImageGalleryView(initial:item.url,files:files.filter { isImage($0) && $0.deletingLastPathComponent() == item.url.deletingLastPathComponent() }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending })
+            }
             .sheet(isPresented:$queue) { DownloadQueueView() }
             .fileImporter(isPresented:$importing,allowedContentTypes:[.movie,.data],allowsMultipleSelection:true) { result in switch result { case .success(let urls):for url in urls { recorder.importFile(url) }; case .failure(let error):recorder.message = error.localizedDescription } }
             .confirmationDialog("删除所选 \(selected.count) 个文件？请先确认已经导出。",isPresented:$deleting) {
