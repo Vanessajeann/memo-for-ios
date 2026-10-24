@@ -1,0 +1,33 @@
+# iOS 18.6.2 后台验收
+
+当前只接入用户打开 HLS 预览时的真实音频会话，尚无录制引擎；audio 权限不是后台录制完成证明。
+
+## 实现要求
+
+- 拉流与文件写入独立于界面生命周期，关闭预览不能停止用户明确启动的录制。
+- stream copy、低内存、分段落盘、失败保留可恢复片段。
+- 有限文件下载使用后台 URLSession 时，持久化任务映射与过期链接处理，完成后合成不能依赖前台定时器。
+- 静音录制、无音轨、多路及另一 App 抢占音频单独验证；不以循环静音音频或伪装 VoIP 保活。
+- 不依赖 iOS 26 的 BGContinuedProcessingTask；自签不会解锁无限后台。
+- 上划关闭／系统终止／重启不保证不断流，重开恢复时准确记录缺口。
+
+## 真机矩阵
+
+使用 Release 构建并脱离调试器，检查实际文件增长、时长、声画同步、时间轴缺口与结束原因。
+
+| 场景 | 验证内容 |
+|---|---|
+| 前台 1/3/9 路 | 并发、内存、发热、文件完整性 |
+| 锁屏 10/30/120 分钟 | 实际媒体连续性 |
+| 切 App／其他 App 发声／来电 | 中断处理及恢复 |
+| 无音轨／静音目标 | 实际后台可达边界 |
+| Wi-Fi↔蜂窝／断网／链接过期 | 重连、重新取源、片段保护 |
+| 低电量／空间不足／资源压力 | 可靠结束、保留原片 |
+| 强制退出／重启 | 重开恢复、缺口展示 |
+
+官方依据：
+
+- https://developer.apple.com/documentation/avfaudio/avaudiosession/category-swift.struct/playback
+- https://developer.apple.com/documentation/foundation/downloading-files-in-the-background
+- https://developer.apple.com/documentation/foundation/urlsessionconfiguration/background(withidentifier:)
+- https://developer.apple.com/videos/play/wwdc2025/227/
