@@ -18,6 +18,7 @@ final class NativeCapture: @unchecked Sendable {
         memo_capture_run(pointer, source.url, source.agent, source.referer, source.cookie, file.path)
     }
     func mp4(input: URL, output: URL) -> Int32 { memo_capture_mp4(pointer, input.path, output.path) }
+    func join(video: URL, audio: URL, output: URL) -> Int32 { memo_capture_join(pointer, video.path, audio.path, output.path) }
     static func error(_ code: Int32) -> String {
         var bytes = [CChar](repeating: 0, count: 256)
         memo_capture_error(code, &bytes, 256)
@@ -39,6 +40,7 @@ final class RecordingManager: ObservableObject {
         let source: Source
         let prefix: String
         var wanted = true
+        var worker: Task<Void,Never>?
         var handle: NativeCapture?
         var locked = Set<URL>()
         var totalBytes: Int64 = 0
@@ -47,7 +49,8 @@ final class RecordingManager: ObservableObject {
         init(_ source: Source) {
             self.source = source
             let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmmss"
-            prefix = f.string(from: Date()) + "-" + UUID().uuidString
+            let name = String(source.name.filter { !$0.isNewline && !"/\\:".contains($0) }.prefix(32))
+            prefix = name + "-" + f.string(from: Date()) + "-" + UUID().uuidString
         }
     }
     @Published private(set) var states: [String: RecordingState] = [:]
@@ -56,6 +59,7 @@ final class RecordingManager: ObservableObject {
     @Published private(set) var conversions = Set<URL>()
     @Published var message: String?
     private var works: [String: Work] = [:]
+    private var listenerRelay: HLSRelay?
     private var listener: AVPlayer?
     private var listenerObservation: NSKeyValueObservation?
     private var listenGeneration = UUID()
@@ -104,19 +108,16 @@ final class RecordingManager: ObservableObject {
         guard !busy(original.id) else { return }
         do {
             let source = try original.validated()
-            guard Link.platform(source.url) == "媒体直链" else {
-                message = "这一版已接入媒体直链录制。抖音／Bilibili 分享解析仍在移植，请暂用已取得的媒体直链。"; return
-            }
-            guard works.count < 9 else { message = "最多同时录制 9 路"; return }
+                        guard works.count < 9 else { message = "最多同时录制 9 路"; return }
             let work = Work(source)
             works[source.id] = work; states[source.id] = RecordingState()
-            monitor()
-            Task { await run(work) }
+            monitor(); updateBackgroundBudget()
+            work.worker = Task { await run(work) }
         } catch { message = error.localizedDescription }
     }
     func stop(_ id: String, reason: String = "已停止") {
         guard let work = works[id] else { return }
-        work.wanted = false; work.reason = reason; work.handle?.cancel()
+        work.wanted = false; work.reason = reason; work.worker?.cancel(); work.handle?.cancel()
         var state = states[id] ?? RecordingState(); state.text = "停止并保存…"; states[id] = state
     }
     func stopAll(reason: String = "已停止") { for id in Array(works.keys) { stop(id, reason: reason) } }
@@ -127,10 +128,13 @@ final class RecordingManager: ObservableObject {
             segment += 1
             let input = directory.appendingPathComponent("\(work.prefix)-\(segment).mkv")
             do {
+                states[id]?.text = attempt == 0 ? "解析直播源…" : "重新取源 · 第 \(attempt) 次"
+                let resolved = try await PlatformClient.shared.live(work.source)
+                guard work.wanted else { break }
+                let source = resolved.recording
                 let handle = try NativeCapture()
                 work.handle = handle; work.locked.insert(input)
-                states[id]?.text = attempt == 0 ? "正在连接…" : "重连中 · 第 \(attempt) 次"
-                let source = work.source
+                states[id]?.diagnostic += "平台：\(Link.platform(work.source.url)) · 画质：\(resolved.result?.best?.label ?? "直链")\n"
                 let result = await Task.detached(priority: .utility) { handle.capture(source: source, file: input) }.value
                 let progress = handle.progress()
                 work.handle = nil
@@ -160,10 +164,16 @@ final class RecordingManager: ObservableObject {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                 }
             } catch {
-                finalText = "录制无法启动"
-                states[id]?.diagnostic += "本地错误：\(error.localizedDescription)\n"; break
+                if work.wanted, attempt < RecordingPolicy.maxRetries, let network = error as? URLError, [.timedOut,.networkConnectionLost,.notConnectedToInternet,.cannotConnectToHost,.cannotFindHost,.dnsLookupFailed].contains(network.code) {
+                    attempt += 1; states[id]?.text = "等待网络并重新取源 · \(attempt)"
+                    try? await Task.sleep(nanoseconds:UInt64(RecordingPolicy.delay(attempt:attempt)) * 1_000_000_000)
+                    continue
+                }
+                finalText = work.reason.isEmpty ? "录制无法启动" : work.reason
+                states[id]?.diagnostic += DownloadManager.safeError(error) + "\n"; break
             }
         }
+        work.worker = nil
         works.removeValue(forKey: id)
         var state = states[id] ?? RecordingState()
         state.text = work.reason.isEmpty ? finalText : work.reason
@@ -226,20 +236,23 @@ final class RecordingManager: ObservableObject {
     }
     func listen(_ source: Source) {
         guard source.url.lowercased().hasPrefix("http"), URL(string: source.url)?.pathExtension.lowercased() == "m3u8",
-              source.cookie.isEmpty, source.referer.isEmpty, source.agent == "Mozilla/5.0",
+              source.cookie.isEmpty,
               let url = URL(string: source.url) else {
-            message = "后台收听目前仅支持无需自定义请求头的 HLS 直链；其他协议仍可在前台录制。"; return
+            message = "后台收听需要包含真实音轨的 HLS 媒体。"; return
         }
         let generation = UUID(); listenGeneration = generation
         Task {
             do {
-                let asset = AVURLAsset(url: url)
+                let bridge = HLSRelay(source: source)
+                let local = try await bridge.start()
+                guard listenGeneration == generation else { bridge.stop(); return }
+                let asset = AVURLAsset(url: local)
                 let tracks = try await asset.loadTracks(withMediaType: .audio)
-                guard listenGeneration == generation else { return }
-                guard !tracks.isEmpty else { message = "该媒体没有可收听音轨，不能使用后台音频运行方式。"; return }
+                guard listenGeneration == generation else { bridge.stop(); return }
+                guard !tracks.isEmpty else { bridge.stop(); message = "该媒体没有可收听音轨，不能使用后台音频运行方式。"; return }
                 try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
                 try AVAudioSession.sharedInstance().setActive(true)
-                listenerObservation = nil; listener?.pause()
+                listenerObservation = nil; listener?.pause(); listenerRelay?.stop(); listenerRelay = bridge
                 let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
                 listener = player; listeningID = source.id
                 listenerObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
@@ -253,7 +266,7 @@ final class RecordingManager: ObservableObject {
     }
     func stopListening() {
         listenGeneration = UUID(); listenerObservation = nil
-        listener?.pause(); listener = nil; listeningID = nil
+        listener?.pause(); listener = nil; listenerRelay?.stop(); listenerRelay = nil; listeningID = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         updateBackgroundBudget()
     }
