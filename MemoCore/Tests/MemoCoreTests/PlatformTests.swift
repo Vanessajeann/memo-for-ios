@@ -94,4 +94,15 @@ final class PlatformTests:XCTestCase {
         XCTAssertFalse(w.filename.contains("/")); XCTAssertFalse(w.filename.contains("\\")); XCTAssertFalse(w.filename.contains("\n"))
         XCTAssertEqual(try JSONDecoder().decode(Work.self,from:JSONEncoder().encode(w)),w)
     }
+    func testOriginalImageContainerIdentification() {
+        XCTAssertEqual(MediaMagic.imageExtension([0xff,0xd8,0xff,0]),"jpg")
+        XCTAssertEqual(MediaMagic.imageExtension([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),"png")
+        XCTAssertEqual(MediaMagic.imageExtension(Array("RIFFxxxxWEBP".utf8)),"webp")
+        XCTAssertEqual(MediaMagic.imageExtension([0,0,0,24] + Array("ftypavif".utf8)),"avif")
+        XCTAssertEqual(MediaMagic.imageExtension([0,0,0,24] + Array("ftypheic".utf8)),"heic")
+        XCTAssertNil(MediaMagic.imageExtension([0,0,0,24] + Array("ftypmp42".utf8)))
+        XCTAssertNil(MediaMagic.imageExtension(Array("<html>verify</html>".utf8)))
+        XCTAssertNil(MediaMagic.imageExtension(Array("FAKExxxxWEBP".utf8)))
+    }
+
 }
