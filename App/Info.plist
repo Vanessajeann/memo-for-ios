@@ -12,6 +12,7 @@
   <key>UILaunchScreen</key><dict/>
   <key>UIBackgroundModes</key><array><string>audio</string></array>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoadsForMedia</key><true/></dict>
+  <key>NSPhotoLibraryAddUsageDescription</key><string>将你选择的 Memo 录像保存到系统相册。</string>
   <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
   <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
 </dict></plist>

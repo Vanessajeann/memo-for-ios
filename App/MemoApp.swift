@@ -6,8 +6,14 @@ import UniformTypeIdentifiers
 @main
 struct MemoApp: App {
     @StateObject private var store = SourceStore()
+    @StateObject private var recorder = RecordingManager()
+    @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
-        WindowGroup { RootView().environmentObject(store) }
+        WindowGroup {
+            RootView().environmentObject(store).environmentObject(recorder)
+                .onAppear { recorder.monitor() }
+                .onChange(of: scenePhase) { _, phase in recorder.background(phase == .background) }
+        }
     }
 }
 
@@ -70,19 +76,22 @@ final class SourceStore: ObservableObject {
 
 struct RootView: View {
     @EnvironmentObject var store: SourceStore
+    @EnvironmentObject var recorder: RecordingManager
     var body: some View {
         TabView {
             LiveView().tabItem { Label("直播", systemImage: "dot.radiowaves.left.and.right") }
+            RecordingLibraryView().tabItem { Label("录像", systemImage: "film.stack") }
             MigrationStatusView().tabItem { Label("移植进度", systemImage: "checklist") }
         }
-        .alert("Memo", isPresented: Binding(get: { store.message != nil }, set: { if !$0 { store.message = nil } })) {
-            Button("知道了") { store.message = nil }
-        } message: { Text(store.message ?? "") }
+        .alert("Memo", isPresented: Binding(get: { store.message != nil || recorder.message != nil }, set: { if !$0 { store.message = nil; recorder.message = nil } })) {
+            Button("知道了") { store.message = nil; recorder.message = nil }
+        } message: { Text(store.message ?? recorder.message ?? "") }
     }
 }
 
 struct LiveView: View {
     @EnvironmentObject var store: SourceStore
+    @EnvironmentObject var recorder: RecordingManager
     @State private var editor: Source?
     @State private var preview: Source?
     @State private var deleting: Source?
@@ -95,7 +104,7 @@ struct LiveView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Label("开发验证版 · 录制与作品功能正在移植", systemImage: "hammer")
+                    Label("录制测试版 · 原流保存", systemImage: "record.circle")
                         .font(.footnote).foregroundStyle(.secondary)
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: grid ? 3 : 1), spacing: 12) {
                         ForEach(store.sources) { source in
@@ -104,12 +113,26 @@ struct LiveView: View {
                                 Text(source.name).font(.headline).lineLimit(2)
                                 Text(Link.platform(source.url)).font(.caption2).foregroundStyle(.secondary)
                                 Button("预览") { openPreview(source) }.buttonStyle(.bordered)
+                                if let state = recorder.states[source.id] {
+                                    Text(state.text).font(.caption2)
+                                    Text(String(format: "%.0f 秒 · %.1f MB", state.mediaSeconds, Double(state.bytes) / 1_048_576))
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Button(recorder.busy(source.id) ? "停止" : "录制") {
+                                    if recorder.busy(source.id) { recorder.stop(source.id) }
+                                    else { recorder.start(source) }
+                                }.buttonStyle(.borderedProminent).tint(recorder.busy(source.id) ? .red : .accentColor)
                             }
                             .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
                             .padding(10).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
                             .contextMenu {
-                                Button("编辑", systemImage: "pencil") { editor = source }
-                                Button("移除", systemImage: "trash", role: .destructive) { deleting = source }
+                                Button("编辑", systemImage: "pencil") { editor = source }.disabled(recorder.busy(source.id))
+                                Button("移除", systemImage: "trash", role: .destructive) { deleting = source }.disabled(recorder.busy(source.id))
+                                Button(recorder.listeningID == source.id ? "停止后台收听" : "后台收听（HLS）") {
+                                    if recorder.listeningID == source.id { recorder.stopListening() }
+                                    else { recorder.listen(source) }
+                                }
+                                Button("复制录制诊断") { UIPasteboard.general.string = recorder.states[source.id]?.diagnostic ?? "暂无诊断" }
                             }
                         }
                         if store.sources.count < 9 {
@@ -118,7 +141,7 @@ struct LiveView: View {
                             }.buttonStyle(.bordered)
                         }
                     }
-                    Text("支持保存 Android Memo 的直播源备份。当前预览仅用于无自定义请求头的 HLS 直链验证；平台分享解析与多路录制尚未接入。").font(.footnote).foregroundStyle(.secondary)
+                    Text("媒体直链支持 HLS、HTTP-FLV、RTMP(S)、RTSP 录制；平台分享解析仍在移植。长按直播源可开启真实后台收听。无声录制在后台受系统时限约束，时限到后会停止并尽量保留片段。").font(.footnote).foregroundStyle(.secondary)
                 }.padding()
             }
             .navigationTitle("Memo")
@@ -128,6 +151,8 @@ struct LiveView: View {
                         Button(grid ? "切换列表" : "切换九宫格") { grid.toggle() }
                         Button("导入直播源") { importing = true }
                         Button("导出直播源") { exportWarning = true }
+                        Button("停止全部录制", role: .destructive) { recorder.stopAll() }.disabled(recorder.activeCount == 0)
+                        if recorder.listeningID != nil { Button("停止后台收听") { recorder.stopListening() } }
                     } label: { Image(systemName: "ellipsis.circle") }
                 }
             }
@@ -196,6 +221,7 @@ struct SourceEditor: View {
 struct StreamPreview: View {
     let source: Source
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var recorder: RecordingManager
     @State private var player: AVPlayer?
     @State private var audioError: String?
     var body: some View {
@@ -209,14 +235,16 @@ struct StreamPreview: View {
             .toolbar { Button("关闭") { dismiss() } }
             .onAppear {
                 do {
-                    try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+                    try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
                     try AVAudioSession.sharedInstance().setActive(true)
                     if let url = URL(string: source.url) { player = AVPlayer(url: url); player?.play() }
                 } catch { audioError = "音频会话未能启动：\(error.localizedDescription)" }
             }
             .onDisappear {
                 player?.pause(); player = nil
-                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                if recorder.listeningID == nil {
+                    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                }
             }
         }
     }
@@ -229,9 +257,10 @@ struct MigrationStatusView: View {
                 Section("已接入，待真机验证") {
                     Text("直播源管理与 Android 备份兼容")
                     Text("HLS 直链预览与真实音频会话")
+                    Text("FFmpeg 直链原流录制、独立停止、有限重连、MKV→MP4")
+                    Text("本地录像、分享、导入和保存到相册")
                 }
                 Section("待移植") {
-                    Text("FFmpeg 多协议、多路录制、重连与文件整理")
                     Text("抖音／Bilibili 分享解析与会话")
                     Text("抖音视频、图集、主页分页下载")
                     Text("Bilibili 分 P、画质、音轨与 DASH 合成")
@@ -239,7 +268,7 @@ struct MigrationStatusView: View {
                     Text("锁屏与切 App 的长期录制测试")
                 }
                 Section {
-                    Text("以 Android 3.2.0-beta1 的全部功能为目标。当前包用于构建与界面验证，不是完整录制工具。")
+                    Text("以 Android 3.2.0-beta1 全部功能为目标。当前为直链录制测试版，尚未完成平台解析与作品下载移植。")
                     Text("目标：iPhone 16 Pro Max / iOS 18.6.2。签名不会解除系统后台限制。")
                 }
             }.navigationTitle("移植进度")
