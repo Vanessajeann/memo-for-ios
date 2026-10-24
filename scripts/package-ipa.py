@@ -19,7 +19,7 @@ if payload.exists():
     shutil.rmtree(payload)
 payload.mkdir(parents=True)
 shutil.copytree(app, payload / app.name, symlinks=True)
-output = root / 'outputs/Memo-direct-recording-test-unsigned.ipa'
+output = root / 'outputs/Memo-ios-port-beta-unsigned.ipa'
 output.parent.mkdir(parents=True, exist_ok=True)
 subprocess.run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(payload), str(output)], check=True)
-print(json.dumps({'ipa': output.name, 'bundle': info['CFBundleIdentifier'], 'minimum_ios': info['MinimumOSVersion'], 'status': 'direct-stream-recording-test'}, ensure_ascii=False))
+print(json.dumps({'ipa': output.name, 'bundle': info['CFBundleIdentifier'], 'minimum_ios': info['MinimumOSVersion'], 'status': 'platform-ui-port-beta'}, ensure_ascii=False))
