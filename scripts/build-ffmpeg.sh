@@ -31,6 +31,11 @@ flags=(--prefix="$prefix" --disable-autodetect --disable-asm --disable-programs
   --enable-parser=aac,h264,hevc,mpegaudio,opus,av1,vp9
   --enable-decoder=aac,h264,hevc,mp3,opus
   --enable-bsf=aac_adtstoasc,h264_mp4toannexb,hevc_mp4toannexb,extract_extradata,null)
+if [ "$(uname -s)" = Darwin ]; then
+  host_sdk="$(xcrun --sdk macosx --show-sdk-path)"
+  flags+=(--host-cc="$(xcrun --sdk macosx --find clang)"
+    --host-cflags="-isysroot $host_sdk" --host-ldflags="-isysroot $host_sdk")
+fi
 if [ "$target" = ios ]; then
   sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
   flags+=(--enable-cross-compile --target-os=darwin --arch=aarch64
@@ -46,7 +51,11 @@ elif [ "$target" = host ]; then
 else
   echo "Unsupported target: $target" >&2; exit 1
 fi
-"$source_dir/configure" "${flags[@]}"
+if ! "$source_dir/configure" "${flags[@]}"; then
+  mkdir -p "$prefix/../logs"
+  cp ffbuild/config.log "$prefix/../logs/ffmpeg-$target-config.log"
+  exit 1
+fi
 make -j 4
 make install
 printf '%s\n' "$build_key" > "$prefix/.memo-commit"
