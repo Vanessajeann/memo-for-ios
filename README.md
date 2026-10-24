@@ -35,7 +35,7 @@ brew install xcodegen ffmpeg
 bash scripts/build-ios.sh
 ```
 
-也可执行 `xcodegen generate` 后在 Xcode 打开 Memo.xcodeproj，设置自己的 Team 并真机运行。Core 测试：`swift test --package-path MemoCore`。
+构建脚本会先准备 FFmpeg 和原版 Memo 图标资源，再生成工程。随后可在 Xcode 打开 Memo.xcodeproj，设置自己的 Team 并真机运行。Core 测试：`swift test --package-path MemoCore`。
 
 ## 上游基线
 
