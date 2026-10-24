@@ -4,24 +4,32 @@
 
 ## 当前状态
 
-**开发初期，尚未完成全功能移植。** 首份 `Memo-dev-bootstrap-unsigned.ipa` 仅用于构建、源管理、Android 源备份兼容和 HLS 直链预览验证，暂不能作为直播录制工具。
+**0.2.0 直链录制测试版，尚未完成全部平台功能移植。**
 
-已写入：SwiftUI 工程、九路源管理与网格／列表、增删改、JSON 导入导出、单路 HLS 预览、真实音频播放会话、核心校验与重试策略测试、macOS 构建和未签名 IPA 打包。
+- HLS、HTTP-FLV、RTMP(S)、RTSP 直链：FFmpeg stream copy，最多九路独立开始／停止、停止全部，有限次数重连。
+- 先写 MKV，再无转码整理为 MP4；整理失败保留 MKV，支持手动重新整理。取消整理不会将部分文件当成完整 MP4 发布。
+- 录像列表、MP4 回看、分享／另存、导入和相册保存。录制或整理中的文件不能删除。
+- 源管理、Android JSON 备份兼容、请求头校验、Cookie 的主机范围限制和默认 TLS 证书验证。
+- 单路 HLS 预览；长按直播源可开启真实后台收听（有音轨、无需自定义请求头的 HLS）。无声录制仅申请有限后台时间，到期停止并尽量保留片段。
 
-待移植：FFmpeg 多协议与多路录制、平台解析、抖音作品与图集、Bilibili 分 P／画质／音轨／DASH、下载队列、录像整理与系统导出。完整范围见 [PARITY.md](docs/PARITY.md)。**编译成功不表示录制完成。**
+仍待移植：抖音／Bilibili 分享解析、作品与图集、分 P／画质／音轨／DASH、完整下载队列、九路自动预览及全部视觉细节。完整范围见 [PARITY.md](docs/PARITY.md)。后台长录、iPhone 安装和多路稳定性需要真机专项验证，不能由 CI 编译或桌面媒体测试代替。
 
-## 获取开发构建
+本地媒体测试覆盖 HTTP/HLS 采集、音视频包不变、MP4 解码、鉴权、跨主机重定向、读阻塞取消、已写片段停止、禁止覆盖、失败保片和取消合成；macOS CI 会重跑这些测试。
 
-Actions → iOS development build，成功后下载 Artifacts 中的 `Memo-iOS-dev-bootstrap-unsigned-<编号>`。解压后核对 SHA256SUMS.txt，再用自己的证书和匹配描述文件重签 IPA。当前包不包含推送／App Group 扩展。
+## 下载每个版本
 
-不需要向仓库或工作流上传 p12、密码和描述文件，不自动发布正式 Release。证书只用于安装，不改变 iOS 后台限制。
+每个成功的 main 分支构建都会直接发布到 [Releases](https://github.com/Vanessajeann/memo-for-ios/releases)，标签格式为 `ios-v<版本>-build.<构建号>`。失败的构建不会发布 IPA；重跑不会覆盖已发布附件。
+
+目前均标记为预发布版。Release 附件包括未签名 IPA、SHA256SUMS.txt、构建信息以及 LGPL 完整源码／重新链接材料。核对校验值后，用自己的证书与匹配描述文件重签安装。无需向仓库上传证书和密码。
+
+原 0.1.0 预览验证版单独补发，明确标记为没有录制引擎；新录制测试版不与它混淆。Actions 的临时构建附件仍保留用于诊断。
 
 ## 本地构建
 
 需要 macOS、Xcode 16.4+（iOS 18 SDK）和 XcodeGen 2.46+：
 
 ```bash
-brew install xcodegen
+brew install xcodegen ffmpeg
 bash scripts/build-ios.sh
 ```
 
@@ -39,4 +47,4 @@ bash scripts/build-ios.sh
 
 ## 许可
 
-自有源码采用 MIT，保留上游 Memo 许可。当前 iOS 包尚未引入 FFmpeg；引入时需提供准确版本、组件选项、来源、许可证与适用的重新链接材料。
+自有源码采用 MIT，保留上游 Memo 许可。FFmpeg 7.1.5 的来源、配置、补丁和 LGPL 重新链接材料见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。每次构建附带完整源码、库和应用对象文件。
