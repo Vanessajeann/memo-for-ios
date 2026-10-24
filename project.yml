@@ -1,0 +1,30 @@
+name: Memo
+options:
+  minimumXcodeGenVersion: 2.46.0
+  deploymentTarget:
+    iOS: '18.0'
+packages:
+  MemoCore:
+    path: MemoCore
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    TARGETED_DEVICE_FAMILY: '1,2'
+    MARKETING_VERSION: '0.1.0'
+    CURRENT_PROJECT_VERSION: '1'
+targets:
+  Memo:
+    type: application
+    platform: iOS
+    sources:
+      - App
+    dependencies:
+      - package: MemoCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.memo.ios
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_STYLE: Automatic
+    scheme:
+      gatherCoverageData: true
