@@ -94,3 +94,18 @@ extension Dictionary where Key == String, Value == Any {
     func a(_ k: String) -> [JObject] { self[k] as? [JObject] ?? [] }
     var encrypted: Bool { ["is_drm", "is_encrypt", "enableEncryption"].contains { flag($0) } }
 }
+
+public enum MediaMagic {
+    /// The stored extension follows the original image container, never a guessed URL suffix.
+    public static func imageExtension(_ bytes: [UInt8]) -> String? {
+        if bytes.starts(with: [0xff,0xd8,0xff]) { return "jpg" }
+        if bytes.starts(with: [0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]) { return "png" }
+        if bytes.count >= 12, String(bytes: bytes[0..<4], encoding:.ascii) == "RIFF", String(bytes: bytes[8..<12], encoding:.ascii) == "WEBP" { return "webp" }
+        if bytes.count >= 12, String(bytes:bytes[4..<8],encoding:.ascii) == "ftyp" {
+            let brand = String(bytes:bytes[8..<12],encoding:.ascii) ?? ""
+            if ["avif","avis"].contains(brand) { return "avif" }
+            if ["heic","heix","hevc","hevx","mif1","msf1"].contains(brand) { return "heic" }
+        }
+        return nil
+    }
+}
