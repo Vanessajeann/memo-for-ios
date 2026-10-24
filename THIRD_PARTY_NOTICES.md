@@ -14,3 +14,7 @@ Each recording-build artifact includes `Memo-relink-materials.tar.gz`: the actua
 To rebuild: install Xcode 16.4+ and XcodeGen, then execute `bash scripts/build-ios.sh`. To replace the LGPL implementation, adjust the pinned source/configuration, regenerate its libraries with a compatible ABI, and relink the application using the supplied object files and Xcode build/link settings; alternatively rebuild the supplied MIT application source. Re-sign the resulting app with your own valid identity and provisioning profile. Reverse engineering/debugging of modifications to the LGPL library is permitted by its license.
 
 The original Android Memo MIT license is preserved in LICENSE. No binary or extracted code from the original third-party IPA is incorporated into this implementation.
+
+## Platform and UI port (0.3.0)
+
+The Swift platform models and webpage observer are ported from Memo 3.2.0-beta1, commit 4327a64e45bd4ff88d99e022d1afde6335593270 (MIT). The original research attribution is retained: yt-dlp Bilibili extractor (Unlicense), https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/extractor/bilibili.py; Douyin response schema references https://github.com/Johnserf-Seed/f2 and https://github.com/JoeanAmier/TikTokDownloader. No third-party signing algorithm or parsing service is bundled. WKWebView, AVFoundation, Network and URLSession are system frameworks.
