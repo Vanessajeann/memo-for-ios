@@ -172,11 +172,8 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
             let header = try FileHandle(forReadingFrom: pending); let bytes = Array(try header.read(upToCount: 32) ?? Data()); try header.close()
             let ext: String
             if jobs[i].work.album {
-                if bytes.starts(with: [0xff,0xd8,0xff]) { ext = "jpg" }
-                else if bytes.starts(with: [0x89,0x50,0x4e,0x47]) { ext = "png" }
-                else if bytes.count >= 12, String(bytes: bytes[8..<12], encoding: .ascii) == "WEBP" { ext = "webp" }
-                else if bytes.count >= 12, String(bytes: bytes[4..<8], encoding: .ascii) == "ftyp" { ext = "heic" }
-                else { throw PlatformError("平台未返回原图文件，之前完成的图片已保留") }
+                guard let original = MediaMagic.imageExtension(bytes) else { throw PlatformError("平台未返回原图文件，之前完成的图片已保留") }
+                ext = original
             } else {
                 guard bytes.count >= 8, String(bytes: bytes[4..<8], encoding: .ascii) == "ftyp" || Array(bytes.prefix(4)) == [0x1a,0x45,0xdf,0xa3] else { throw PlatformError("平台未返回可用的媒体文件，请刷新作品") }
                 ext = "mp4"

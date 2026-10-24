@@ -33,7 +33,7 @@ struct WorksPane:View {
                 VStack(spacing:12) {
                     HStack(alignment:.top,spacing:10) {
                         Image(systemName:model.platform == .douyin ? "person.crop.rectangle" : "play.rectangle.on.rectangle").foregroundStyle(MemoStyle.blue).padding(.top,5)
-                        TextField(model.platform == .douyin ? "粘贴博主主页分享链接" : "粘贴 BV／AV、分享链接或 UP 主页",text:$model.input,axis:.vertical).font(.subheadline).lineLimit(1...3).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        TextField(model.platform == .douyin ? "粘贴博主主页分享链接" : "粘贴 BV／AV、分享链接或 UP 主页",text:$model.input,axis:.vertical).font(.subheadline).lineLimit(1...3).frame(minWidth:0,maxWidth:.infinity).textInputAutocapitalization(.never).autocorrectionDisabled()
                         Button("粘贴",systemImage:"doc.on.clipboard") { if let value = UIPasteboard.general.string { model.input = value } }.labelStyle(.iconOnly).frame(width:36,height:36)
                     }
                     HStack {

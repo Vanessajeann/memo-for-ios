@@ -88,10 +88,12 @@ struct RootView: View {
     @ObservedObject var douyin: WorksModel
     @ObservedObject var bili: WorksModel
     @State private var tab = Int(ProcessInfo.processInfo.environment["MEMO_UI_TAB"] ?? "0") ?? 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var navigation
     private let names = ["直播","录像","作品","设置"]
     private let icons = ["dot.radiowaves.left.and.right","film.stack","square.grid.2x2","slider.horizontal.3"]
     var body: some View {
+        GeometryReader { bounds in
         ZStack {
             MemoBackground()
             Group {
@@ -102,13 +104,14 @@ struct RootView: View {
                 default: LiveView()
                 }
             }
+        }.frame(width:bounds.size.width,height:bounds.size.height)
         }
         .tint(MemoStyle.blue)
         .safeAreaInset(edge:.bottom,spacing:0) {
             HStack(spacing:4) {
                 ForEach(0..<4) { index in
                     Button {
-                        withAnimation(.spring(response:0.36,dampingFraction:0.82)) { tab = index }
+                        withAnimation(reduceMotion ? nil : .spring(response:0.36,dampingFraction:0.82)) { tab = index }
                     } label: {
                         VStack(spacing:4) { Image(systemName:icons[index]).font(.system(size:20,weight:.medium)); Text(names[index]).font(.caption2.weight(.medium)) }
                             .foregroundStyle(tab == index ? MemoStyle.blue : .secondary).frame(maxWidth:.infinity,minHeight:52)

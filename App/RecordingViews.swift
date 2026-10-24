@@ -2,6 +2,7 @@ import SwiftUI
 import AVKit
 import Photos
 import UniformTypeIdentifiers
+import ImageIO
 
 struct LocalRecording:Identifiable { let url:URL; var id:String { url.path } }
 struct RecordingLibraryView:View {
@@ -75,7 +76,7 @@ struct RecordingLibraryView:View {
                 Button { open(file) } label:{
                     ZStack {
                         RoundedRectangle(cornerRadius:12).fill(MemoStyle.blue.opacity(0.10))
-                        if isImage(file), let image = UIImage(contentsOfFile:file.path) { Image(uiImage:image).resizable().scaledToFill() }
+                        if isImage(file) { FileThumbnail(file:file) }
                         else { Image(systemName:file.pathExtension == "mkv" ? "film" : "play.fill").font(.title3).foregroundStyle(MemoStyle.blue) }
                     }.frame(width:grid ? nil : 55,height:grid ? 110 : 68).clipped().clipShape(RoundedRectangle(cornerRadius:12))
                 }.buttonStyle(.plain).accessibilityLabel("预览 \(title(file))")
@@ -169,5 +170,19 @@ struct ZoomImage:View {
                     .onTapGesture(count:2) { withAnimation { scale = scale == 1 ? 2 : 1 } }
             } else { ContentUnavailableView("系统无法预览此格式",systemImage:"photo",description:Text("可通过分享保存原文件。")) }
         }.clipped()
+    }
+}
+
+struct FileThumbnail:View {
+    let file:URL
+    @State private var image:UIImage?
+    var body:some View {
+        Group { if let image { Image(uiImage:image).resizable().scaledToFill() } else { Color.clear } }
+            .task(id:file) {
+                image = await Task.detached(priority:.utility) {
+                    guard let source = CGImageSourceCreateWithURL(file as CFURL,nil), let cg = CGImageSourceCreateThumbnailAtIndex(source,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceCreateThumbnailWithTransform:true,kCGImageSourceThumbnailMaxPixelSize:480,kCGImageSourceShouldCacheImmediately:true] as CFDictionary) else { return nil as UIImage? }
+                    return UIImage(cgImage:cg)
+                }.value
+            }
     }
 }

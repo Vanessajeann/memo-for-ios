@@ -66,7 +66,7 @@ final class WorksModel: NSObject, ObservableObject, WKNavigationDelegate, WKScri
         }
         guard !mid.isEmpty else { open(); return }
         busy = true; let token = generation
-        task = Task { defer { busy = false }; do { try await nextBili(token: token) } catch { message = DownloadManager.safeError(error); gathering = false } }
+        task = Task { defer { if generation == token { busy = false } }; do { try await nextBili(token: token) } catch { if generation == token { message = DownloadManager.safeError(error); gathering = false } } }
     }
     private func nextBili(token: UUID) async throws {
         let (incoming,more) = try await PlatformClient.shared.userPage(mid,page: page)
@@ -185,6 +185,6 @@ struct OfficialBrowser: View {
                 ToolbarItem(placement: .cancellationAction) { Button("返回 Memo") { dismiss(); Task { await model.refreshSession() } } }
                 ToolbarItem(placement: .topBarTrailing) { Button("刷新", systemImage: "arrow.clockwise") { model.web.reload() } }
             }
-        }
+        }.onDisappear { model.showBrowser = false; Task { await model.refreshSession() } }
     }
 }
