@@ -36,7 +36,11 @@ public struct Source: Codable, Identifiable, Equatable, Sendable {
         var s = self
         s.url = try Link.extract(url)
         for h in [referer, cookie, agent] {
-            if h.contains("\n") || h.contains("\r") { throw MemoError.invalidHeader }
+            // CRLF is one extended grapheme cluster in Swift. Check scalars,
+            // not Character membership, so paired and lone line breaks fail.
+            if h.unicodeScalars.contains(where: { $0.value == 10 || $0.value == 13 }) {
+                throw MemoError.invalidHeader
+            }
         }
         s.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.name.isEmpty { s.name = "未命名直播" }
