@@ -1,0 +1,38 @@
+name: Publish existing preview build
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-bootstrap.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Publish the verified 0.1.0 preview without rebuilding it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag=ios-v0.1.0-build.3
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo 'Preview release already exists; no assets are overwritten.'
+            exit 0
+          fi
+          gh run download 40103674910 --repo "$GH_REPO" --name Memo-iOS-dev-bootstrap-unsigned-3 --dir preview
+          (cd preview && sha256sum --check SHA256SUMS.txt)
+          echo '09525721e3928e0a32abf34f5e927034f69b10d16cb2add6859fe7ff1de55804  preview/Memo-dev-bootstrap-unsigned.ipa' | sha256sum --check
+          cat > preview/RELEASE-NOTES.md <<'NOTES'
+          已成功构建的 0.1.0 预览验证版，原始 IPA 未修改、未重签。
+
+          包含源管理、Android 备份兼容和单路 HLS 预览。此版本尚无录制引擎、平台分享解析或作品下载功能。
+
+          目标 iOS 18.6.2；IPA 未签名，需要自行签名安装。核心测试与 arm64 编译打包已通过，真机行为未验证。
+          NOTES
+          gh release create "$tag" preview/*.ipa preview/SHA256SUMS.txt preview/BUILD-INFO.txt \
+            --repo "$GH_REPO" --target 65120284229253c8bd18e3539435c0e8271f9678 \
+            --title 'Memo iOS 0.1.0 · preview build 3' --prerelease --notes-file preview/RELEASE-NOTES.md

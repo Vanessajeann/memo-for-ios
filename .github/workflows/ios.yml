@@ -22,15 +22,16 @@ jobs:
           test -d /Applications/Xcode_16.4.app/Contents/Developer
           echo 'DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer' >> "$GITHUB_ENV"
       - name: Install project generator
-        run: brew install xcodegen
+        run: brew install xcodegen ffmpeg
       - name: Test, archive and package unsigned development IPA
         run: bash scripts/build-ios.sh
       - name: Upload development package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: Memo-iOS-dev-bootstrap-unsigned-${{ github.run_number }}
+          name: Memo-iOS-direct-recording-test-unsigned-${{ github.run_number }}
           path: |
             outputs/*.ipa
+            outputs/*.tar.gz
             outputs/SHA256SUMS.txt
             outputs/BUILD-INFO.txt
           if-no-files-found: error
@@ -43,3 +44,23 @@ jobs:
           path: build/logs/
           if-no-files-found: ignore
           retention-days: 14
+  release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Download verified build and publish a versioned prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MEMO_RUN_ID: ${{ github.run_id }}
+          MEMO_RUN_NUMBER: ${{ github.run_number }}
+          MEMO_COMMIT: ${{ github.sha }}
+        run: bash scripts/publish-release.sh
