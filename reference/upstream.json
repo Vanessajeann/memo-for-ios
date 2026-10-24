@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/Vanessajeann/Memo",
+  "tag": "v3.2.0-beta1",
+  "branch": "pre-view",
+  "commit": "4327a64e45bd4ff88d99e022d1afde6335593270",
+  "apk_sha256": "daa14230e57099c73472c69cdaafa5e19120e9031ccba10880fd6415e60a9820",
+  "reference_sha256": {
+    "app/src/app/memo/Store.java": "8f48e246e9ad1564c39d8aa72fb67e99de48bbb2b2e2773012014e7f16e45607",
+    "app/src/app/memo/RecordingPolicy.java": "fbd2c792ec4063e02dd37192f33adf8463acacaac557db50c68a6bcb8a0dd207",
+    "app/src/app/memo/DouyinResolver.java": "75368a550c0a134a31803453625d01f5cb4946acf49d16180ec69c111f78933e",
+    "app/src/app/memo/BiliApi.java": "369f590e6280b2a6b930d4d88085cd5790945c58a5d77e922c0b94063fcd8ddf",
+    "app/src/app/memo/BiliModel.java": "98c017ff5d3ce58a77e2bd98b081963222382aedd6202665d7b52799e812fe91",
+    "app/src/app/memo/WorksModel.java": "092fea2fa6a796458c2f971f54cb78592b4334673656ad4e9ec7b07a09a08147",
+    "app/assets/works-observe.js": "49e6b4324ad01a8ff25307d71f9019ec0c89959da09aabc2ca4b643d98560e7c"
+  }
+}
