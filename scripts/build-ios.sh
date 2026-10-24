@@ -18,6 +18,7 @@ node tests/works-observer.cjs App/works-observe.js
 swift test --package-path MemoCore 2>&1 | tee build/logs/core-tests.log
 bash scripts/test-native.sh 2>&1 | tee build/logs/native-tests.log
 bash scripts/build-ffmpeg.sh ios 2>&1 | tee build/logs/ffmpeg-ios.log
+python3 scripts/prepare-assets.py
 xcodegen generate 2>&1 | tee build/logs/project.log
 xcodebuild -project Memo.xcodeproj -scheme Memo -configuration Release \
   -sdk iphoneos -destination 'generic/platform=iOS' \
