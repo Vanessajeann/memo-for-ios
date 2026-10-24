@@ -91,6 +91,18 @@ try:
     check(run('mp4',root/'capture.mkv','existing.mkv')['code']<0 and (root/'capture.mkv').read_bytes()==original, 'failed MP4 conversion retains its input')
     check(run('mp4',root/'capture.mkv','cancelled.part',cancel=-2)['code']<0 and (root/'capture.mkv').read_bytes()==original, 'cancelled MP4 conversion cannot report a complete file')
     check(run('capture',base+'/input.mp4','injected.mkv','a=b\r\nInjected: yes')['code']<0, 'native bridge rejects header injection independently')
+    command('ffmpeg','-v','error','-y','-i',str(root/'input.mp4'),'-map','0:v:0','-c','copy',str(root/'video.mp4'))
+    command('ffmpeg','-v','error','-y','-i',str(root/'input.mp4'),'-map','0:a:0','-c','copy',str(root/'audio.mp4'))
+    result=run('join',root/'video.mp4','joined.mp4',str(root/'audio.mp4'))
+    check(result['code']==0, 'separate DASH tracks joined with explicit mapping')
+    for selection,source in [('v','video.mp4'),('a','audio.mp4')]:
+        check(packets(root/source,selection)==packets(root/'joined.mp4',selection), 'DASH '+selection+' packet payloads unchanged')
+    command('ffmpeg','-v','error','-i',str(root/'joined.mp4'),'-f','null','-')
+    check(True, 'DASH result decodes with audio and video')
+    original=(root/'video.mp4').read_bytes()
+    check(run('join',root/'video.mp4','existing.mkv',str(root/'audio.mp4'))['code']<0 and (root/'existing.mkv').read_bytes()==sentinel, 'DASH join refuses existing output')
+    check(run('join',root/'video.mp4','join-cancel.mp4',str(root/'audio.mp4'),cancel=-2)['code']<0 and (root/'video.mp4').read_bytes()==original, 'cancelled DASH join retains source tracks')
+    check(run('join',root/'audio.mp4','wrong-track.mp4',str(root/'video.mp4'))['code']<0, 'DASH join rejects swapped or missing track types')
     print(json.dumps({'checks':checks,'status':'passed'}))
 finally:
     server.shutdown()
