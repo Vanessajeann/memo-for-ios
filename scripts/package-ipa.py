@@ -11,7 +11,7 @@ if not app.is_dir():
     raise SystemExit('Missing Xcode archive application')
 info = plistlib.loads((app / 'Info.plist').read_bytes())
 binary = app / info['CFBundleExecutable']
-subprocess.run(['xcrun', 'lipo', '-verify_arch', 'arm64', str(binary)], check=True)
+subprocess.run(['xcrun', 'lipo', str(binary), '-verify_arch', 'arm64'], check=True)
 if tuple(map(int, info['MinimumOSVersion'].split('.'))) > (18, 6, 2):
     raise SystemExit('MinimumOSVersion is newer than the target iOS 18.6.2')
 payload = root / 'build/ipa/Payload'
