@@ -19,6 +19,7 @@ final class NativeCapture: @unchecked Sendable {
     }
     func mp4(input: URL, output: URL) -> Int32 { memo_capture_mp4(pointer, input.path, output.path) }
     func join(video: URL, audio: URL, output: URL) -> Int32 { memo_capture_join(pointer, video.path, audio.path, output.path) }
+    func probeAudio(_ source: Source) -> Int32 { memo_capture_probe_audio(pointer, source.url, source.agent, source.referer, source.cookie) }
     static func error(_ code: Int32) -> String {
         var bytes = [CChar](repeating: 0, count: 256)
         memo_capture_error(code, &bytes, 256)
@@ -55,6 +56,7 @@ final class RecordingManager: ObservableObject {
     }
     @Published private(set) var states: [String: RecordingState] = [:]
     @Published private(set) var listeningID: String?
+    @Published private(set) var listeningText = "当前未开启后台收听"
     @Published private(set) var filesVersion = 0
     @Published private(set) var conversions = Set<URL>()
     @Published var message: String?
@@ -62,6 +64,11 @@ final class RecordingManager: ObservableObject {
     private var listenerRelay: HLSRelay?
     private var listener: AVPlayer?
     private var listenerObservation: NSKeyValueObservation?
+    private var listenerItemObservation: NSKeyValueObservation?
+    private var listenerEndObserver: NSObjectProtocol?
+    private var listenTask: Task<Void,Never>?
+    private var listenTimeout: Task<Void,Never>?
+    private var listenProbe: NativeCapture?
     private var listenGeneration = UUID()
     private var manualHandles: [URL: NativeCapture] = [:]
     private var timer: Timer?
@@ -234,41 +241,86 @@ final class RecordingManager: ObservableObject {
             try FileManager.default.copyItem(at: url, to: target); filesVersion += 1
         } catch { message = "无法导入此录像：\(error.localizedDescription)" }
     }
-    func listen(_ source: Source) {
-        guard source.url.lowercased().hasPrefix("http"), URL(string: source.url)?.pathExtension.lowercased() == "m3u8",
-              source.cookie.isEmpty,
-              let url = URL(string: source.url) else {
+    func listen(_ original: Source) {
+        guard let source = try? original.validated(),
+              let url = URL(string: source.url), ["http","https"].contains(url.scheme ?? ""),
+              url.pathExtension.lowercased() == "m3u8" else {
             message = "后台收听需要包含真实音轨的 HLS 媒体。"; return
         }
-        let generation = UUID(); listenGeneration = generation
-        Task {
+        stopListening()
+        let generation = listenGeneration
+        listeningID = source.id; listeningText = "正在检测直播音轨…"
+        listenTask = Task {
             do {
+                // HLS static AVAsset tracks can be empty before playback. Inspect
+                // actual demuxed packets with the capture engine's scoped headers.
+                let probe = try NativeCapture(); listenProbe = probe
+                let result = await withTaskCancellationHandler {
+                    await Task.detached(priority:.utility) { probe.probeAudio(source) }.value
+                } onCancel: { probe.cancel() }
+                guard listenGeneration == generation, !Task.isCancelled else { return }
+                listenProbe = nil
+                guard result >= 0 else {
+                    stopListening(); message = "音轨检测未完成（\(result)），请检查网络或刷新直播源后重试；前台录制不受此提示影响。"; return
+                }
+                guard result == 1 else {
+                    stopListening(); message = "已检测到画面，但当前直播流未提供音轨，无法开启后台收听。前台录制仍可继续。"; return
+                }
                 let bridge = HLSRelay(source: source)
                 defer { if listenerRelay !== bridge { bridge.stop() } }
                 let local = try await bridge.start()
-                guard listenGeneration == generation else { bridge.stop(); return }
-                let asset = AVURLAsset(url: local)
-                let tracks = try await asset.loadTracks(withMediaType: .audio)
-                guard listenGeneration == generation else { bridge.stop(); return }
-                guard !tracks.isEmpty else { bridge.stop(); message = "该媒体没有可收听音轨，不能使用后台音频运行方式。"; return }
+                guard listenGeneration == generation, !Task.isCancelled else { return }
                 try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
                 try AVAudioSession.sharedInstance().setActive(true)
-                listenerObservation = nil; listener?.pause(); listenerRelay?.stop(); listenerRelay = bridge
-                let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
-                listener = player; listeningID = source.id
-                listenerObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
-                    Task { @MainActor in self?.updateBackgroundBudget() }
+                listenerRelay = bridge
+                let item = AVPlayerItem(url:local), player = AVPlayer()
+                player.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
+                listener = player; listeningText = "已检测到音轨，正在缓冲…"
+                listenerItemObservation = item.observe(\.status, options:[.initial,.new]) { [weak self] item, _ in
+                    let failed = item.status == .failed
+                    Task { @MainActor in
+                        guard let self, self.listenGeneration == generation, failed else { return }
+                        self.stopListening(); self.message = "已检测到音轨，但系统播放器无法播放此直播，请刷新直播源或更换 HLS 画质后重试。"
+                    }
                 }
+                listenerObservation = player.observe(\.timeControlStatus, options: [.initial,.new]) { [weak self] _, _ in
+                    Task { @MainActor in
+                        guard let self, self.listenGeneration == generation, let player = self.listener else { return }
+                        if player.timeControlStatus == .playing {
+                            self.listeningText = "正在收听直播音频"
+                            self.listenTimeout?.cancel(); self.listenTimeout = nil
+                        } else { self.listeningText = "收听已暂停或正在缓冲…" }
+                        self.updateBackgroundBudget()
+                    }
+                }
+                listenerEndObserver = NotificationCenter.default.addObserver(forName:.AVPlayerItemDidPlayToEndTime,object:item,queue:.main) { [weak self] _ in
+                    Task { @MainActor in
+                        guard let self, self.listenGeneration == generation else { return }
+                        self.stopListening(); self.message = "直播收听已结束。"
+                    }
+                }
+                listenTimeout = Task { [weak self] in
+                    do { try await Task.sleep(nanoseconds:30_000_000_000) } catch { return }
+                    guard let self, self.listenGeneration == generation else { return }
+                    self.stopListening(); self.message = "收听启动超时，请检查网络或刷新直播源后重试。"
+                }
+                player.replaceCurrentItem(with:item)
                 player.play()
+                listenTask = nil
             } catch {
-                if listenGeneration == generation { message = "收听未能启动：\(error.localizedDescription)" }
+                if listenGeneration == generation { stopListening(); message = "收听未能启动：\(DownloadManager.safeError(error))" }
             }
         }
     }
     func stopListening() {
-        listenGeneration = UUID(); listenerObservation = nil
+        let wasListening = listeningID != nil
+        listenGeneration = UUID(); listenTask?.cancel(); listenTask = nil
+        listenProbe?.cancel(); listenProbe = nil; listenTimeout?.cancel(); listenTimeout = nil
+        listenerObservation = nil; listenerItemObservation = nil
+        if let listenerEndObserver { NotificationCenter.default.removeObserver(listenerEndObserver) }; listenerEndObserver = nil
         listener?.pause(); listener = nil; listenerRelay?.stop(); listenerRelay = nil; listeningID = nil
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        listeningText = "当前未开启后台收听"
+        if wasListening { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
         updateBackgroundBudget()
     }
     func background(_ value: Bool) {
