@@ -93,6 +93,25 @@ try:
     check(run('capture',base+'/input.mp4','injected.mkv','a=b\r\nInjected: yes')['code']<0, 'native bridge rejects header injection independently')
     command('ffmpeg','-v','error','-y','-i',str(root/'input.mp4'),'-map','0:v:0','-c','copy',str(root/'video.mp4'))
     command('ffmpeg','-v','error','-y','-i',str(root/'input.mp4'),'-map','0:a:0','-c','copy',str(root/'audio.mp4'))
+    # Regression: HLS audio detection must inspect media, not an AVAsset static
+    # tracks list. Keep network failures and cancellation distinct from no audio.
+    command('ffmpeg','-v','error','-y','-i',str(root/'video.mp4'),'-c','copy','-f','hls',
+            '-hls_time','1','-hls_list_size','0',str(root/'silent.m3u8'))
+    command('ffmpeg','-v','error','-y','-i',str(root/'audio.mp4'),'-c','copy','-f','hls',
+            '-hls_time','1','-hls_list_size','0',str(root/'audio.m3u8'))
+    for path in ['live.m3u8','audio.m3u8','input.mp4']:
+        check(run('probe',base+'/'+path,'probe-unused')['code']==1, 'real audio detected in '+path)
+    check(not (root/'probe-unused').exists(), 'audio probe creates no recording or synthetic audio file')
+    check(run('probe',base+'/silent.m3u8','probe-unused')['code']==0, 'video-only HLS is accurately reported as no audio')
+    check(run('probe',base+'/absent.m3u8','probe-unused')['code']<0, 'failed audio request is not misreported as no audio')
+    start=time.monotonic(); result=run('probe',base+'/stall','probe-unused',cancel=100)
+    check(result['code']<0 and time.monotonic()-start<2, 'audio probe cancellation interrupts stalled I/O')
+    check(run('probe',base+'/live.m3u8','probe-unused',cancel=-2)['code']<0, 'already-cancelled probe cannot report successful audio')
+    check(run('probe',base+'/cookie.mp4','probe-unused','fixture=ok')['code']==1, 'audio probe supports scoped authentication')
+    before=len(requests)
+    check(run('probe',base+'/redirect','probe-unused','fixture=ok')['code']==1 and any(p=='/input.mp4' and c=='' for p,c in requests[before:]), 'audio probe does not leak Cookie across redirect hosts')
+    check(run('probe',base+'/live.m3u8','probe-unused','a=b\r\nInjected: yes')['code']<0, 'audio probe rejects header injection')
+    check(run('probe',root/'input.mp4','probe-unused')['code']<0, 'network audio probe rejects local file inputs')
     result=run('join',root/'video.mp4','joined.mp4',str(root/'audio.mp4'))
     check(result['code']==0, 'separate DASH tracks joined with explicit mapping')
     for selection,source in [('v','video.mp4'),('a','audio.mp4')]:
