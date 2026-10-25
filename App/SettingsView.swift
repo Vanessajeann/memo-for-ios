@@ -29,9 +29,9 @@ struct SettingsView:View {
                     Text("账号登录与验证仅在官方网页完成。队列与作品缓存不保存 Cookie；媒体下载不附带账号 Cookie。").font(.caption).foregroundStyle(.secondary)
                 }
                 Section("后台录制") {
-                    Label(recorder.listeningID == nil ? "当前未开启后台收听" : "已开启真实音频收听",systemImage:"headphones")
+                    Label(recorder.listeningText,systemImage:"headphones")
                     if recorder.listeningID != nil { Button("停止收听") { recorder.stopListening() } }
-                    Text("长按直播卡片可开启真实音频收听。无声录制使用系统给予的有限后台时间，时限结束会停止并保留片段。自签不会解除 iOS 的后台限制；长时间锁屏录制仍需真机验证。").font(.caption).foregroundStyle(.secondary)
+                    Text("点直播卡片右上角的 ···，选择后台收听。检测到真实音轨并开始播放后再锁屏；可在这里查看检测、缓冲和收听状态。无声录制使用系统给予的有限后台时间，时限结束会停止并保留片段。自签不会解除 iOS 的后台限制；长时间锁屏录制仍需真机验证。").font(.caption).foregroundStyle(.secondary)
                 }
                 Section("数据迁移") {
                     Button("导出直播源",systemImage:"square.and.arrow.up") { exportWarning = true }

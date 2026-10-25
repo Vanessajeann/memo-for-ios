@@ -22,7 +22,8 @@ int main(int argc, char **argv) {
     int has_cancel = c.milliseconds != 0;
     if (c.milliseconds == -2) { memo_capture_cancel(s); has_cancel = 0; }
     if (has_cancel) pthread_create(&thread, NULL, cancel_after, &c);
-    int result = argv[1][0] == 'j' && argc > 4 ? memo_capture_join(s, argv[2], argv[4], argv[3]) : argv[1][0] == 'm' ? memo_capture_mp4(s, argv[2], argv[3]) :
+    int result = argv[1][0] == 'p' ? memo_capture_probe_audio(s, argv[2], "Memo-fixture", "", argc > 4 ? argv[4] : "") :
+        argv[1][0] == 'j' && argc > 4 ? memo_capture_join(s, argv[2], argv[4], argv[3]) : argv[1][0] == 'm' ? memo_capture_mp4(s, argv[2], argv[3]) :
         memo_capture_run(s, argv[2], "Memo-fixture", "", argc > 4 ? argv[4] : "", argv[3]);
     if (has_cancel) pthread_join(thread, NULL);
     MemoProgress p = memo_capture_progress(s);

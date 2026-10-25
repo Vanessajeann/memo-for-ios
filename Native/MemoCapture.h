@@ -17,6 +17,10 @@ MemoProgress memo_capture_progress(MemoCapture *capture);
 /* Network URL only. Returns 0 on EOF or requested stop; negative FFmpeg error otherwise. */
 int memo_capture_run(MemoCapture *capture, const char *url, const char *agent,
                      const char *referer, const char *cookie, const char *output);
+/* HTTP(S) only, no output file. 1 = observed audio packet, 0 = video without an
+ * audio stream; negative = probe failed/cancelled, never evidence of no audio. */
+int memo_capture_probe_audio(MemoCapture *capture, const char *url, const char *agent,
+                             const char *referer, const char *cookie);
 /* Local files only. Input is always retained; caller publishes the output atomically. */
 int memo_capture_mp4(MemoCapture *capture, const char *input, const char *output);
 int memo_capture_join(MemoCapture *capture, const char *video, const char *audio, const char *output);

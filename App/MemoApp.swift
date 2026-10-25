@@ -301,7 +301,10 @@ struct StreamPreview:View {
                     Spacer()
                     Button(recorder.busy(source.id) ? "停止录制" : "录制",systemImage:"record.circle") { if recorder.busy(source.id) { recorder.stop(source.id) } else { recorder.start(source) } }.tint(MemoStyle.red)
                     Spacer()
-                    Button("后台收听",systemImage:"headphones") { if let s = stream.resolved { recorder.listen(s) } }.disabled(stream.resolved == nil)
+                    Button(recorder.listeningID == source.id ? "停止后台收听" : "后台收听",systemImage:"headphones") {
+                        if recorder.listeningID == source.id { recorder.stopListening() }
+                        else if let s = stream.resolved { recorder.listen(s) }
+                    }.disabled(stream.resolved == nil && recorder.listeningID != source.id)
                 }
             }
             .task(id:phase) { if phase == .active { await stream.open(source,muted:muted) } else { stream.stop() } }
