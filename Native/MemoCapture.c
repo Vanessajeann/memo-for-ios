@@ -196,6 +196,48 @@ int memo_capture_run(MemoCapture *s, const char *url, const char *agent, const c
 int memo_capture_mp4(MemoCapture *s, const char *input, const char *output) {
     return transfer(s, input, "", "", "", output, 1);
 }
+/* HLS AVURLAsset may expose an empty static tracks array even when its segments
+ * contain audio. Inspect the real demuxed stream instead of treating it as mute.
+ * Run on a worker, with the same bounded/cancellable I/O and credential scoping
+ * as capture. No decoded samples, output files or synthetic audio are produced. */
+int memo_capture_probe_audio(MemoCapture *s, const char *url, const char *agent,
+                             const char *referer, const char *cookie) {
+    if (!s || !url || !(av_strstart(url,"http://",NULL) || av_strstart(url,"https://",NULL)) ||
+        !safe_header(agent) || !safe_header(referer) || !safe_header(cookie)) return AVERROR(EINVAL);
+    AVFormatContext *in = avformat_alloc_context();
+    if (!in) return AVERROR(ENOMEM);
+    AVPacket *packet = NULL;
+    AVDictionary *options = NULL;
+    int ret = 0;
+    in->interrupt_callback = (AVIOInterruptCB){interrupted,s};
+    atomic_store(&s->phase,1);
+    av_dict_set(&options,"protocol_whitelist","http,https,tcp,tls,crypto",0);
+    av_dict_set(&options,"rw_timeout","20000000",0);
+    av_dict_set(&options,"tls_verify","1",0);
+    av_dict_set(&options,"user_agent",agent,0);
+    if (*referer) av_dict_set(&options,"referer",referer,0);
+    ret = add_cookies(&options,url,cookie); if (ret < 0) goto finish_probe;
+    ret = avformat_open_input(&in,url,NULL,&options); if (ret < 0) goto finish_probe;
+    atomic_store(&s->phase,2);
+    ret = avformat_find_stream_info(in,NULL); if (ret < 0) goto finish_probe;
+    int audio = av_find_best_stream(in,AVMEDIA_TYPE_AUDIO,-1,-1,NULL,0);
+    if (audio < 0) {
+        ret = av_find_best_stream(in,AVMEDIA_TYPE_VIDEO,-1,-1,NULL,0) >= 0 ? 0 : AVERROR_INVALIDDATA;
+        goto finish_probe;
+    }
+    packet = av_packet_alloc(); if (!packet) { ret = AVERROR(ENOMEM); goto finish_probe; }
+    while ((ret = av_read_frame(in,packet)) >= 0) {
+        int found = packet->stream_index == audio && packet->size > 0;
+        av_packet_unref(packet);
+        if (found) { ret = 1; break; }
+        if (interrupted(s)) { ret = AVERROR_EXIT; break; }
+    }
+finish_probe:
+    av_packet_free(&packet); avformat_close_input(&in); av_dict_free(&options);
+    if (atomic_load(&s->cancelled)) ret = AVERROR_EXIT;
+    else if (s->timed_out) ret = AVERROR(ETIMEDOUT);
+    atomic_store(&s->phase,5); return ret;
+}
 void memo_capture_error(int code, char *buffer, size_t length) { av_strerror(code, buffer, length); }
 int memo_capture_retryable(int e) {
     return e == AVERROR(ETIMEDOUT) || e == AVERROR(EIO) || e == AVERROR(ECONNRESET) ||
