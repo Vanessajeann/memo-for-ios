@@ -245,10 +245,11 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         guard let e = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.isRegularFileKey]) else { return [] }
         return e.compactMap { $0 as? URL }.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }.sorted { $0.path > $1.path }
     }
-    func delete(_ file: URL) {
-        guard file.standardizedFileURL.path.hasPrefix(directory.standardizedFileURL.path + "/") else { return }
-        do { try FileManager.default.removeItem(at: file); version += 1 }
-        catch { message = "文件删除失败" }
+    @discardableResult func delete(_ file: URL) -> Bool {
+        let id = file.deletingLastPathComponent().lastPathComponent
+        guard !jobs.contains(where:{ $0.id == id && $0.wanted && !$0.complete }), joining[id] == nil else { return false }
+        do { try LocalFiles.remove(file,in:directory,recursive:true); version += 1; return true }
+        catch { return false }
     }
     nonisolated static func safeID(_ id: String) -> Bool { !MediaURL.match(#"^([0-9]{10,24}|bili_BV[0-9A-Za-z]{10}_[0-9]{1,20})(?:_q[0-9]{1,6})?$"#, id).isEmpty }
     nonisolated static func safeError(_ error: Error) -> String {

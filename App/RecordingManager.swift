@@ -94,7 +94,7 @@ final class RecordingManager: ObservableObject {
     }
     var activeCount: Int { works.count }
     func busy(_ id: String) -> Bool { works[id] != nil }
-    func isLocked(_ url: URL) -> Bool { conversions.contains(url) || works.values.contains { $0.locked.contains(url) } }
+    func isLocked(_ url: URL) -> Bool { conversions.contains { LocalFiles.path($0) == LocalFiles.path(url) } || works.values.contains { $0.locked.contains { LocalFiles.path($0) == LocalFiles.path(url) } } }
     func monitor() {
         guard timer == nil, !works.isEmpty, !inBackground else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -222,10 +222,10 @@ final class RecordingManager: ObservableObject {
         return urls.filter { ["mp4", "mkv"].contains($0.pathExtension) && !isLocked($0) }
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
     }
-    func delete(_ file: URL) {
-        guard file.deletingLastPathComponent() == directory, !isLocked(file) else { return }
-        do { try FileManager.default.removeItem(at: file); filesVersion += 1 }
-        catch { message = "删除失败：\(error.localizedDescription)" }
+    @discardableResult func delete(_ file: URL) -> Bool {
+        guard !isLocked(file) else { return false }
+        do { try LocalFiles.remove(file,in:directory); filesVersion += 1; return true }
+        catch { return false }
     }
     func importFile(_ url: URL) {
         let access = url.startAccessingSecurityScopedResource()

@@ -26,3 +26,12 @@ xcrun simctl terminate "$device" app.memo.ios
 SIMCTL_CHILD_MEMO_UI_TAB=0 SIMCTL_CHILD_MEMO_UI_CAPTURE=1 xcrun simctl launch "$device" app.memo.ios
 sleep 3
 xcrun simctl io "$device" screenshot outputs/ui/live-dark.png
+xcrun simctl ui "$device" appearance light
+xcrun simctl terminate "$device" app.memo.ios
+container="$(xcrun simctl get_app_container "$device" app.memo.ios data)"
+fixture="$(python3 -c 'from pathlib import Path; print(sorted(Path("build/native-tests/media").glob("run-*/input.mp4"))[-1])')"
+mkdir -p "$container/Documents/Recordings"
+for item in 1 2 3; do cp "$fixture" "$container/Documents/Recordings/测试录像-$item.mp4"; done
+SIMCTL_CHILD_MEMO_UI_TAB=1 SIMCTL_CHILD_MEMO_UI_CAPTURE=1 SIMCTL_CHILD_MEMO_UI_LIBRARY_SELECTION=1 xcrun simctl launch "$device" app.memo.ios
+sleep 3
+xcrun simctl io "$device" screenshot outputs/ui/library-selection.png
