@@ -1,4 +1,4 @@
-name: iOS development build
+name: iOS build and release
 on:
   push:
     branches: [main]
@@ -25,10 +25,20 @@ jobs:
         run: brew install xcodegen ffmpeg
       - name: Test, archive and package unsigned development IPA
         run: bash scripts/build-ios.sh
+      - name: Capture iPhone 16 Pro Max UI
+        run: bash scripts/capture-ui.sh
+      - name: Upload interface captures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Memo-iOS-interface-${{ github.run_number }}
+          path: outputs/ui/*.png
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Upload development package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: Memo-iOS-direct-recording-test-unsigned-${{ github.run_number }}
+          name: Memo-iOS-port-beta-unsigned-${{ github.run_number }}
           path: |
             outputs/*.ipa
             outputs/*.tar.gz

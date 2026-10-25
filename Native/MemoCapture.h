@@ -19,6 +19,7 @@ int memo_capture_run(MemoCapture *capture, const char *url, const char *agent,
                      const char *referer, const char *cookie, const char *output);
 /* Local files only. Input is always retained; caller publishes the output atomically. */
 int memo_capture_mp4(MemoCapture *capture, const char *input, const char *output);
+int memo_capture_join(MemoCapture *capture, const char *video, const char *audio, const char *output);
 void memo_capture_error(int code, char *buffer, size_t length);
 int memo_capture_retryable(int code);
 const char *memo_capture_version(void);

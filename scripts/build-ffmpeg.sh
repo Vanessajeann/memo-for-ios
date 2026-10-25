@@ -43,6 +43,13 @@ if [ "$target" = ios ]; then
     --extra-cflags='-arch arm64 -miphoneos-version-min=18.0'
     --extra-ldflags='-arch arm64 -miphoneos-version-min=18.0'
     --enable-securetransport)
+elif [ "$target" = simulator ]; then
+  sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+  sim_arch="$(uname -m)"
+  flags+=(--enable-cross-compile --target-os=darwin --arch="$sim_arch"
+    --cc="$(xcrun --sdk iphonesimulator --find clang)" --sysroot="$sdk"
+    --extra-cflags="-target $sim_arch-apple-ios18.0-simulator"
+    --extra-ldflags="-target $sim_arch-apple-ios18.0-simulator" --enable-securetransport)
 elif [ "$target" = host ]; then
   if [ "$(uname -s)" = Darwin ]; then
     flags+=(--enable-securetransport --cc="$(xcrun --sdk macosx --find clang)"

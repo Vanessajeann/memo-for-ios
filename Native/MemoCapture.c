@@ -203,3 +203,78 @@ int memo_capture_retryable(int e) {
         e == AVERROR_HTTP_SERVER_ERROR;
 }
 const char *memo_capture_version(void) { return av_version_info(); }
+
+/* Two local DASH tracks, explicit stream mapping, no decoder or encoder. */
+int memo_capture_join(MemoCapture *s, const char *video_path, const char *audio_path, const char *output) {
+    if (!s || !video_path || !audio_path || !output) return AVERROR(EINVAL);
+    AVFormatContext *in[2] = {NULL, NULL}, *out = NULL;
+    AVPacket *packet[2] = {NULL, NULL};
+    int index[2] = {-1,-1}, have[2] = {0,0}, ended[2] = {0,0};
+    int ret = 0, header = 0, trailer = 0;
+    const char *paths[2] = {video_path,audio_path};
+    atomic_store(&s->phase, 1);
+    for (int i = 0; i < 2; i++) {
+        AVDictionary *options = NULL;
+        av_dict_set(&options, "protocol_whitelist", "file", 0);
+        in[i] = avformat_alloc_context();
+        if (!in[i]) { av_dict_free(&options); ret = AVERROR(ENOMEM); goto finish; }
+        in[i]->interrupt_callback = (AVIOInterruptCB){interrupted,s};
+        ret = avformat_open_input(&in[i], paths[i], NULL, &options);
+        av_dict_free(&options); if (ret < 0) goto finish;
+        ret = avformat_find_stream_info(in[i],NULL); if (ret < 0) goto finish;
+        index[i] = av_find_best_stream(in[i], i == 0 ? AVMEDIA_TYPE_VIDEO : AVMEDIA_TYPE_AUDIO, -1,-1,NULL,0);
+        if (index[i] < 0) { ret = index[i]; goto finish; }
+        packet[i] = av_packet_alloc(); if (!packet[i]) { ret = AVERROR(ENOMEM); goto finish; }
+    }
+    ret = avformat_alloc_output_context2(&out,NULL,"mp4",output); if (ret < 0 || !out) { ret = AVERROR(ENOMEM); goto finish; }
+    for (int i = 0; i < 2; i++) {
+        AVStream *dst = avformat_new_stream(out,NULL);
+        if (!dst) { ret = AVERROR(ENOMEM); goto finish; }
+        ret = avcodec_parameters_copy(dst->codecpar,in[i]->streams[index[i]]->codecpar); if (ret < 0) goto finish;
+        dst->codecpar->codec_tag = 0; dst->time_base = in[i]->streams[index[i]]->time_base;
+    }
+    out->avoid_negative_ts = AVFMT_AVOID_NEG_TS_MAKE_ZERO;
+    out->flags |= AVFMT_FLAG_AUTO_BSF;
+    int reserved = open(output,O_WRONLY | O_CREAT | O_EXCL,0600);
+    if (reserved < 0) { ret = AVERROR(errno); goto finish; } close(reserved);
+    ret = avio_open(&out->pb,output,AVIO_FLAG_WRITE); if (ret < 0) goto finish;
+    AVDictionary *mux = NULL; av_dict_set(&mux,"movflags","+faststart",0);
+    ret = avformat_write_header(out,&mux); av_dict_free(&mux); if (ret < 0) goto finish;
+    header = 1; atomic_store(&s->phase,3);
+    while (!atomic_load(&s->cancelled)) {
+        for (int i = 0; i < 2; i++) {
+            while (!have[i] && !ended[i]) {
+                ret = av_read_frame(in[i],packet[i]);
+                if (ret == AVERROR_EOF) { ended[i] = 1; ret = 0; break; }
+                if (ret < 0) goto finish;
+                if (packet[i]->stream_index != index[i]) { av_packet_unref(packet[i]); continue; }
+                have[i] = 1;
+            }
+        }
+        if (!have[0] && !have[1]) { ret = 0; break; }
+        int use = !have[0] ? 1 : 0;
+        if (have[0] && have[1]) {
+            int64_t t0 = packet[0]->dts == AV_NOPTS_VALUE ? packet[0]->pts : packet[0]->dts;
+            int64_t t1 = packet[1]->dts == AV_NOPTS_VALUE ? packet[1]->pts : packet[1]->dts;
+            use = av_compare_ts(t0,in[0]->streams[index[0]]->time_base,t1,in[1]->streams[index[1]]->time_base) > 0;
+        }
+        AVPacket *p = packet[use]; AVStream *src = in[use]->streams[index[use]], *dst = out->streams[use];
+        int size = p->size;
+        av_packet_rescale_ts(p,src->time_base,dst->time_base); p->stream_index = use; p->pos = -1;
+        ret = av_interleaved_write_frame(out,p); av_packet_unref(p); have[use] = 0;
+        if (ret < 0) goto finish;
+        atomic_fetch_add(&s->bytes,size); atomic_fetch_add(&s->packets,1);
+        atomic_store(&s->last_progress,av_gettime_relative());
+    }
+finish:
+    atomic_store(&s->phase,4);
+    if (header) trailer = av_write_trailer(out);
+    for (int i = 0; i < 2; i++) { av_packet_free(&packet[i]); avformat_close_input(&in[i]); }
+    if (out && out->pb) { int close_ret = avio_closep(&out->pb); if (trailer >= 0 && close_ret < 0) trailer = close_ret; }
+    avformat_free_context(out);
+    if (atomic_load(&s->cancelled)) ret = AVERROR_EXIT;
+    else if (s->timed_out) ret = AVERROR(ETIMEDOUT);
+    if (ret >= 0 && trailer < 0) ret = trailer;
+    if (ret >= 0 && !atomic_load(&s->packets)) ret = AVERROR_INVALIDDATA;
+    atomic_store(&s->phase,5); return ret;
+}

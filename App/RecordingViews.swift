@@ -2,88 +2,189 @@ import SwiftUI
 import AVKit
 import Photos
 import UniformTypeIdentifiers
+import ImageIO
 
-struct LocalRecording: Identifiable {
-    let url: URL
-    var id: String { url.path }
-}
-struct RecordingLibraryView: View {
-    @EnvironmentObject var recorder: RecordingManager
-    @State private var playing: LocalRecording?
-    @State private var deleting: URL?
+struct LocalRecording:Identifiable { let url:URL; var id:String { url.path } }
+struct RecordingLibraryView:View {
+    @EnvironmentObject var recorder:RecordingManager
+    @EnvironmentObject var downloads:DownloadManager
+    @State private var playing:LocalRecording?
+    @State private var showingImage:LocalRecording?
+    @State private var deleting = false
     @State private var importing = false
+    @State private var selecting = false
+    @State private var queue = false
+    @State private var selected = Set<URL>()
     @State private var saving = Set<URL>()
-    var body: some View {
+    @State private var search = ""
+    @State private var category = "全部"
+    @AppStorage("library.grid") private var grid = false
+    private var files:[URL] { (recorder.files() + downloads.files()).filter { (search.isEmpty || title($0).localizedCaseInsensitiveContains(search)) && (category == "全部" || (category == "录像" ? !isImage($0) : isImage($0))) } }
+    var body:some View {
         NavigationStack {
-            List {
-                Section {
-                    Text("已完成的录像会显示在这里。录制、整理中的文件不会被删除或分享；异常留下的 MKV 可以重新整理。")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                ForEach(recorder.files(), id: \.self) { file in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(file.lastPathComponent).font(.caption).lineLimit(2)
-                        HStack {
-                            if file.pathExtension == "mp4" {
-                                Button("播放") { playing = LocalRecording(url: file) }
-                                Button(saving.contains(file) ? "保存中" : "相册") { savePhoto(file) }.disabled(saving.contains(file))
-                            } else {
-                                Button("整理为 MP4") { recorder.convertFile(file) }
-                            }
-                            ShareLink(item: file) { Image(systemName: "square.and.arrow.up") }
-                            Spacer()
-                            Button(role: .destructive) { deleting = file } label: { Image(systemName: "trash") }
-                                .disabled(saving.contains(file))
-                        }.buttonStyle(.borderless)
+            ScrollView {
+                VStack(alignment:.leading,spacing:16) {
+                    HStack {
+                        VStack(alignment:.leading,spacing:4) { Text("YOUR COLLECTION").font(.caption2.weight(.semibold)).tracking(2).foregroundStyle(MemoStyle.blue); Text("\(files.count) 个文件 · 保存在本机").font(.caption).foregroundStyle(.secondary) }
+                        Spacer()
+                        Button("下载队列",systemImage:"arrow.down.circle") { queue = true }.labelStyle(.iconOnly).font(.title3).frame(width:44,height:44)
                     }
+                    Picker("类型",selection:$category) { Text("全部").tag("全部"); Text("录像").tag("录像"); Text("图片").tag("图片") }.pickerStyle(.segmented)
+                    if files.isEmpty { ContentUnavailableView("收藏从这里开始",systemImage:"film.stack",description:Text("完成的直播录像、视频与图集会显示在这里。录制中的片段会在保存后出现。")) }
+                    LazyVGrid(columns:Array(repeating:GridItem(.flexible(),spacing:12),count:grid ? 3 : 1),spacing:12) {
+                        ForEach(files,id:\.self) { file in fileCard(file) }
+                    }
+                }.padding(18)
+            }
+            .memoPage().navigationTitle("录像")
+            .searchable(text:$search,prompt:"搜索录像与作品")
+            .toolbar {
+                ToolbarItemGroup(placement:.topBarTrailing) {
+                    Button(selecting ? "完成" : "选择") { selecting.toggle(); if !selecting { selected = [] } }
+                    Menu {
+                        Button("导入录像",systemImage:"square.and.arrow.down") { importing = true }
+                        Button(grid ? "切换列表" : "切换网格",systemImage:grid ? "list.bullet" : "square.grid.3x3") { grid.toggle() }
+                        if selecting { Button("全选当前结果") { selected = Set(files) } }
+                    } label:{ Image(systemName:"ellipsis.circle") }
                 }
-                if recorder.files().isEmpty { Text("暂无已完成录像") }
             }
-            .navigationTitle("录像")
-            .toolbar { Button("导入") { importing = true } }
-            .sheet(item: $playing) { recording in
-                LocalRecordingPlayer(recording: recording)
-            }
-            .fileImporter(isPresented: $importing, allowedContentTypes: [.movie, .data]) { result in
-                switch result {
-                case .success(let url): recorder.importFile(url)
-                case .failure(let error): recorder.message = error.localizedDescription
+            .safeAreaInset(edge:.bottom) {
+                if selecting && !selected.isEmpty {
+                    HStack {
+                        ShareLink(items:selected.sorted { $0.path < $1.path }) { Label("分享",systemImage:"square.and.arrow.up") }
+                        Spacer()
+                        Button("相册",systemImage:"photo") { savePhotos(Array(selected)) }.disabled(!saving.isEmpty)
+                        Spacer()
+                        Button("删除",systemImage:"trash",role:.destructive) { deleting = true }.disabled(!saving.isEmpty)
+                    }.font(.subheadline).padding(14).glassCard(radius:20).padding(.horizontal,18).padding(.bottom,4)
                 }
             }
-            .confirmationDialog("删除此录像？删除后无法恢复，请先确认已经导出。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
-                Button("删除", role: .destructive) { if let file = deleting { recorder.delete(file) }; deleting = nil }
+            .sheet(item:$playing) { LocalRecordingPlayer(recording:$0) }
+            .sheet(item:$showingImage) { item in
+                ImageGalleryView(initial:item.url,files:files.filter { isImage($0) && $0.deletingLastPathComponent() == item.url.deletingLastPathComponent() }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending })
+            }
+            .sheet(isPresented:$queue) { DownloadQueueView() }
+            .fileImporter(isPresented:$importing,allowedContentTypes:[.movie,.data],allowsMultipleSelection:true) { result in switch result { case .success(let urls):for url in urls { recorder.importFile(url) }; case .failure(let error):recorder.message = error.localizedDescription } }
+            .confirmationDialog("删除所选 \(selected.count) 个文件？请先确认已经导出。",isPresented:$deleting) {
+                Button("删除",role:.destructive) {
+                    for file in selected { if file.deletingLastPathComponent() == recorder.directory { recorder.delete(file) } else { downloads.delete(file) } }; selected = []
+                }
             }
         }
     }
-    private func savePhoto(_ file: URL) {
-        guard !saving.contains(file) else { return }
-        saving.insert(file)
-        Task { @MainActor in
-            let permission = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-            guard permission == .authorized || permission == .limited else {
-                recorder.message = "请在系统设置中允许 Memo 添加照片和视频。"; saving.remove(file); return
+    private func fileCard(_ file:URL)->some View {
+        VStack(alignment:.leading,spacing:9) {
+            HStack(alignment:.top,spacing:12) {
+                Button { open(file) } label:{
+                    ZStack {
+                        RoundedRectangle(cornerRadius:12).fill(MemoStyle.blue.opacity(0.10))
+                        if isImage(file) { FileThumbnail(file:file) }
+                        else { Image(systemName:file.pathExtension == "mkv" ? "film" : "play.fill").font(.title3).foregroundStyle(MemoStyle.blue) }
+                    }.frame(width:grid ? nil : 55,height:grid ? 110 : 68).clipped().clipShape(RoundedRectangle(cornerRadius:12))
+                }.buttonStyle(.plain).accessibilityLabel("预览 \(title(file))")
+                if !grid { fileLabels(file); Spacer(minLength:0) }
+                if selecting { Button { if !selected.insert(file).inserted { selected.remove(file) } } label:{ Image(systemName:selected.contains(file) ? "checkmark.circle.fill" : "circle").font(.title3).frame(width:32,height:38) }.buttonStyle(.plain) }
             }
-            do {
-                try await PHPhotoLibrary.shared().performChanges {
-                    PHAssetCreationRequest.forAsset().addResource(with: .video, fileURL: file, options: nil)
-                }
-                recorder.message = "已保存至系统相册"
-            } catch { recorder.message = "相册保存失败，原文件仍保留：\(error.localizedDescription)" }
-            saving.remove(file)
+            if grid { fileLabels(file) }
+            if !selecting {
+                HStack(spacing:8) {
+                    if file.pathExtension == "mkv" { Button("整理 MP4") { recorder.convertFile(file) } }
+                    else { Button("相册") { savePhotos([file]) }.disabled(saving.contains(file)) }
+                    Spacer(minLength:0)
+                    ShareLink(item:file) { Image(systemName:"square.and.arrow.up") }.accessibilityLabel("分享或保存到 Files")
+                    Button(role:.destructive) { selected = [file]; deleting = true } label:{ Image(systemName:"trash") }.disabled(saving.contains(file))
+                }.font(.caption).buttonStyle(.borderless)
+            }
+        }.padding(12).glassCard(radius:21)
+    }
+    private func fileLabels(_ file:URL)->some View {
+        VStack(alignment:.leading,spacing:6) {
+            Text(title(file)).font(grid ? .caption : .subheadline.weight(.medium)).lineLimit(2)
+            let size = Int64((try? file.resourceValues(forKeys:[.fileSizeKey]).fileSize) ?? 0)
+            Text(file.pathExtension.uppercased() + " · " + ByteCountFormatter.string(fromByteCount:size,countStyle:.file)).font(.caption2).foregroundStyle(.secondary)
+        }.frame(maxWidth:.infinity,alignment:.leading)
+    }
+    private func title(_ file:URL)->String {
+        if let job = downloads.jobs.first(where:{ $0.id == file.deletingLastPathComponent().lastPathComponent }) { return job.work.title + (isImage(file) ? " · " + file.deletingPathExtension().lastPathComponent : "") }
+        return file.lastPathComponent
+    }
+    private func open(_ file:URL) { if isImage(file) { showingImage = LocalRecording(url:file) } else if file.pathExtension == "mkv" { recorder.convertFile(file) } else { playing = LocalRecording(url:file) } }
+    private func isImage(_ file:URL)->Bool { ["jpg","jpeg","png","webp","heic","avif"].contains(file.pathExtension.lowercased()) }
+    private func savePhotos(_ files:[URL]) {
+        let supported = files.filter { isImage($0) || $0.pathExtension == "mp4" }.filter { !saving.contains($0) }
+        guard !supported.isEmpty else { recorder.message = "请先将 MKV 整理为 MP4"; return }
+        saving.formUnion(supported)
+        Task { @MainActor in
+            defer { saving.subtract(supported) }
+            let permission = await PHPhotoLibrary.requestAuthorization(for:.addOnly)
+            guard permission == .authorized || permission == .limited else { recorder.message = "请在系统设置中允许 Memo 添加照片和视频。"; return }
+            var count = 0
+            for file in supported {
+                do {
+                    let image = isImage(file)
+                    try await PHPhotoLibrary.shared().performChanges { PHAssetCreationRequest.forAsset().addResource(with:image ? .photo : .video,fileURL:file,options:nil) }
+                    count += 1
+                } catch { /* Continue batch; files remain in Memo even if Photos rejects a format. */ }
+            }
+            recorder.message = "已保存 \(count)/\(supported.count) 个文件到相册" + (count < supported.count ? "。部分格式系统不接受，可通过分享保存到 Files；原文件均保留。" : "")
         }
     }
 }
-struct LocalRecordingPlayer: View {
-    let recording: LocalRecording
+struct LocalRecordingPlayer:View {
+    let recording:LocalRecording
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject var recorder: RecordingManager
-    @State private var player: AVPlayer?
-    var body: some View {
+    @State private var player:AVPlayer?
+    var body:some View {
         NavigationStack {
-            VideoPlayer(player: player)
-                .toolbar { Button("关闭") { dismiss() } }
-                .onAppear { player = AVPlayer(url: recording.url); player?.play() }
+            VideoPlayer(player:player).background(.black)
+                .navigationTitle(recording.url.lastPathComponent).navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement:.cancellationAction) { Button("关闭") { dismiss() } }; ToolbarItem(placement:.topBarTrailing) { ShareLink(item:recording.url) } }
+                .onAppear { player = AVPlayer(url:recording.url); player?.play() }
                 .onDisappear { player?.pause(); player = nil }
         }
+    }
+}
+struct ImageGalleryView:View {
+    let initial:URL, files:[URL]
+    @Environment(\.dismiss) private var dismiss
+    @State private var selected = 0
+    var body:some View {
+        NavigationStack {
+            TabView(selection:$selected) {
+                ForEach(Array(files.enumerated()),id:\.element) { index,file in
+                    ZoomImage(file:file).tag(index)
+                }
+            }.tabViewStyle(.page).background(.black).ignoresSafeArea(edges:.bottom)
+            .navigationTitle("\(selected+1) / \(files.count)").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement:.cancellationAction) { Button("关闭") { dismiss() } }; ToolbarItem(placement:.topBarTrailing) { if selected < files.count { ShareLink(item:files[selected]) } } }
+            .onAppear { selected = files.firstIndex(of:initial) ?? 0 }
+        }
+    }
+}
+struct ZoomImage:View {
+    let file:URL
+    @State private var scale:CGFloat = 1
+    var body:some View {
+        GeometryReader { g in
+            if let image = UIImage(contentsOfFile:file.path) {
+                Image(uiImage:image).resizable().scaledToFit().frame(width:g.size.width,height:g.size.height).scaleEffect(scale)
+                    .gesture(MagnifyGesture().onChanged { scale = max(1,min(5,$0.magnification)) }.onEnded { _ in if scale < 1.05 { scale = 1 } })
+                    .onTapGesture(count:2) { withAnimation { scale = scale == 1 ? 2 : 1 } }
+            } else { ContentUnavailableView("系统无法预览此格式",systemImage:"photo",description:Text("可通过分享保存原文件。")) }
+        }.clipped()
+    }
+}
+
+struct FileThumbnail:View {
+    let file:URL
+    @State private var image:UIImage?
+    var body:some View {
+        Group { if let image { Image(uiImage:image).resizable().scaledToFill() } else { Color.clear } }
+            .task(id:file) {
+                image = await Task.detached(priority:.utility) {
+                    guard let source = CGImageSourceCreateWithURL(file as CFURL,nil), let cg = CGImageSourceCreateThumbnailAtIndex(source,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceCreateThumbnailWithTransform:true,kCGImageSourceThumbnailMaxPixelSize:480,kCGImageSourceShouldCacheImmediately:true] as CFDictionary) else { return nil as UIImage? }
+                    return UIImage(cgImage:cg)
+                }.value
+            }
     }
 }

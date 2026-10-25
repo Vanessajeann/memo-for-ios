@@ -73,8 +73,8 @@ public enum Link {
     /// Classification does not resolve a platform URL or prove that it is playable.
     public static func platform(_ link: String) -> String {
         let h = URLComponents(string: link)?.host?.lowercased() ?? ""
-        if h == "douyin.com" || h.hasSuffix(".douyin.com") { return "抖音分享（解析待移植）" }
-        if h == "b23.tv" || h == "bilibili.com" || h.hasSuffix(".bilibili.com") { return "Bilibili 分享（解析待移植）" }
+        if Platform.douyin.official(h) { return "抖音" }
+        if Platform.bilibili.official(h) { return "Bilibili" }
         return "媒体直链"
     }
 }
