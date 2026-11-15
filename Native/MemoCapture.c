@@ -142,7 +142,7 @@ static int transfer(MemoCapture *s, const char *url, const char *agent,
             ? MKTAG('h','v','c','1') : 0;
         stream->time_base = in->streams[i]->time_base;
     }
-    out->avoid_negative_ts = AVFMT_AVOID_NEG_TS_MAKE_ZERO;
+    out->avoid_negative_ts = compatible ? AVFMT_AVOID_NEG_TS_DISABLED : AVFMT_AVOID_NEG_TS_MAKE_ZERO;
     out->max_interleave_delta = 1000000;
     out->flags |= AVFMT_FLAG_FLUSH_PACKETS | AVFMT_FLAG_AUTO_BSF;
     /* Fail rather than overwrite an unrelated recording. Callers allocate UUID paths. */
@@ -171,8 +171,8 @@ static int transfer(MemoCapture *s, const char *url, const char *agent,
         AVStream *src = in->streams[index], *dst = out->streams[mapping[index]];
         int size = packet->size;
         int64_t timestamp = packet->dts != AV_NOPTS_VALUE ? packet->dts : packet->pts;
-        if (origin_us == AV_NOPTS_VALUE && timestamp != AV_NOPTS_VALUE) origin_us = av_rescale_q(timestamp, src->time_base, AV_TIME_BASE_Q);
-        if (origin_us != AV_NOPTS_VALUE) {
+        if (!compatible && origin_us == AV_NOPTS_VALUE && timestamp != AV_NOPTS_VALUE) origin_us = av_rescale_q(timestamp, src->time_base, AV_TIME_BASE_Q);
+        if (!compatible && origin_us != AV_NOPTS_VALUE) {
             int64_t offset = av_rescale_q(origin_us, AV_TIME_BASE_Q, src->time_base);
             if (packet->pts != AV_NOPTS_VALUE) packet->pts -= offset;
             if (packet->dts != AV_NOPTS_VALUE) packet->dts -= offset;
