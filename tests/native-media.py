@@ -161,6 +161,28 @@ try:
     check(run('repair',root/'input.mp4','not-hevc.mp4')['code']<0, 'HEVC repair rejects non-HEVC input')
     check(run('repair',root/'old-hevc.mp4','cancelled-repair.mp4',cancel=-2)['code']<0 and
           (root/'old-hevc.mp4').read_bytes()==saved, 'cancelled HEVC repair retains original')
+    # B-frame video and AAC encoder delay can both start with negative DTS.
+    # Preserve edit lists and the AAC priming skip instead of shifting the two
+    # streams and accidentally adding audible samples or changing sync.
+    command('ffmpeg','-v','error','-y','-f','lavfi','-i','testsrc2=size=160x96:rate=10',
+            '-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-t','1',
+            '-c:v','libx265','-preset','ultrafast','-x265-params','log-level=error:pools=1:frame-threads=1:bframes=2',
+            '-c:a','aac','-movflags','+faststart',str(root/'timed-hevc.mp4'))
+    result=run('repair',root/'timed-hevc.mp4','timed-repaired.mp4')
+    def stream_times(file):
+        s=command('ffprobe','-v','error','-show_entries','stream=codec_type,start_time,duration',
+                  '-of','json',str(file))
+        return {x['codec_type']:(float(x.get('start_time',0)),float(x.get('duration',0)))
+                for x in json.loads(s)['streams'] if x['codec_type'] in ['audio','video']}
+    before=stream_times(root/'timed-hevc.mp4'); after=stream_times(root/'timed-repaired.mp4')
+    check(result['code']==0 and before.keys()==after.keys() and
+          all(abs(x-y)<0.003 for k in before for x,y in zip(before[k],after[k])),
+          'HEVC repair preserves audio and video start times and durations')
+    def decoded_audio(file):
+        return hashlib.sha256(command('ffmpeg','-v','error','-i',str(file),'-map','0:a:0',
+                                      '-f','s16le','-c:a','pcm_s16le','-')).digest()
+    check(decoded_audio(root/'timed-hevc.mp4')==decoded_audio(root/'timed-repaired.mp4'),
+          'HEVC repair preserves AAC priming and decoded audio')
     print(json.dumps({'checks':checks,'status':'passed'}))
 finally:
     server.shutdown()
