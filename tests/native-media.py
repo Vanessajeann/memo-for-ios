@@ -134,6 +134,33 @@ try:
     result=run('join',root/'video.mp4','join-empty-audio.mp4',str(root/'empty-audio.mp4'))
     check(result['code']<0 and (root/'video.mp4').exists() and (root/'empty-audio.mp4').exists(),
           'DASH join rejects an empty audio track and preserves both inputs')
+    # Bilibili can return fragmented HEVC. The original packet bytes must be
+    # retained while MP4 uses the sample entry expected by Apple software.
+    command('ffmpeg','-v','error','-y','-f','lavfi','-i','testsrc2=size=160x96:rate=10',
+            '-t','2','-an','-c:v','libx265','-preset','ultrafast','-x265-params',
+            'log-level=error:pools=1:frame-threads=1','-movflags','+empty_moov+default_base_moof+frag_keyframe',str(root/'hevc-video.mp4'))
+    result=run('join',root/'hevc-video.mp4','hevc-joined.mp4',str(root/'audio.mp4'))
+    def tag(path):
+        return command('ffprobe','-v','error','-select_streams','v:0','-show_entries',
+                       'stream=codec_tag_string','-of','default=nokey=1:noprint_wrappers=1',str(path)).decode().strip()
+    check(result['code']==0 and tag(root/'hevc-joined.mp4')=='hvc1', 'DASH HEVC joins as hvc1')
+    check(packets(root/'hevc-video.mp4','v')==packets(root/'hevc-joined.mp4','v') and
+          packets(root/'audio.mp4','a')==packets(root/'hevc-joined.mp4','a'), 'HEVC DASH join keeps both packet payloads')
+    command('ffmpeg','-v','error','-xerror','-i',str(root/'hevc-joined.mp4'),'-f','null','-')
+    check(True, 'HEVC DASH output decodes')
+    command('ffmpeg','-v','error','-y','-i',str(root/'hevc-joined.mp4'),'-map','0:v:0','-map','0:a:0',
+            '-c','copy','-tag:v','hev1',str(root/'old-hevc.mp4'))
+    saved=(root/'old-hevc.mp4').read_bytes()
+    result=run('repair',root/'old-hevc.mp4','repaired.mp4')
+    check(result['code']==0 and tag(root/'repaired.mp4')=='hvc1', 'existing hev1 repaired as hvc1')
+    check((root/'old-hevc.mp4').read_bytes()==saved and
+          packets(root/'old-hevc.mp4','v')==packets(root/'repaired.mp4','v') and
+          packets(root/'old-hevc.mp4','a')==packets(root/'repaired.mp4','a'), 'HEVC repair preserves source and both packet payloads')
+    check(run('repair',root/'old-hevc.mp4','existing.mkv')['code']<0 and (root/'existing.mkv').read_bytes()==sentinel,
+          'HEVC repair never overwrites existing output')
+    check(run('repair',root/'input.mp4','not-hevc.mp4')['code']<0, 'HEVC repair rejects non-HEVC input')
+    check(run('repair',root/'old-hevc.mp4','cancelled-repair.mp4',cancel=-2)['code']<0 and
+          (root/'old-hevc.mp4').read_bytes()==saved, 'cancelled HEVC repair retains original')
     print(json.dumps({'checks':checks,'status':'passed'}))
 finally:
     server.shutdown()

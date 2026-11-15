@@ -58,6 +58,13 @@ static int interrupted(void *opaque) {
     return 0;
 }
 static int safe_header(const char *s) { return s && !strchr(s, '\r') && !strchr(s, '\n'); }
+static int dolby_vision(const AVCodecParameters *par) {
+    if (!par) return 0;
+    if (par->codec_tag == MKTAG('d','v','h','1') || par->codec_tag == MKTAG('d','v','h','e')) return 1;
+    for (int i = 0; i < par->nb_coded_side_data; i++)
+        if (par->coded_side_data[i].type == AV_PKT_DATA_DOVI_CONF) return 1;
+    return 0;
+}
 
 /* Use FFmpeg's domain/path scoped cookie store instead of a raw Cookie header,
  * so HTTP redirects and HLS CDN requests do not forward credentials to other hosts. */
@@ -83,7 +90,7 @@ static int add_cookies(AVDictionary **options, const char *url, const char *cook
 }
 
 static int transfer(MemoCapture *s, const char *url, const char *agent,
-                    const char *referer, const char *cookie, const char *output, int mp4) {
+                    const char *referer, const char *cookie, const char *output, int mp4, int compatible) {
     if (!s || !url || !output) return AVERROR(EINVAL);
     if (!mp4 && !(av_strstart(url, "http://", NULL) || av_strstart(url, "https://", NULL) ||
         av_strstart(url, "rtmp://", NULL) || av_strstart(url, "rtmps://", NULL) || av_strstart(url, "rtsp://", NULL))) return AVERROR(EINVAL);
@@ -92,6 +99,7 @@ static int transfer(MemoCapture *s, const char *url, const char *agent,
     AVDictionary *options = NULL, *mux_options = NULL;
     int *mapping = NULL, ret = 0, header_written = 0, trailer_ret = 0;
     int video = -1, audio = -1, started = mp4;
+    int64_t video_packets = 0, audio_packets = 0;
     int64_t origin_us = AV_NOPTS_VALUE;
     in = avformat_alloc_context();
     if (!in) return AVERROR(ENOMEM);
@@ -113,6 +121,10 @@ static int transfer(MemoCapture *s, const char *url, const char *agent,
     video = av_find_best_stream(in, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
     audio = av_find_best_stream(in, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
     if (video < 0 && audio < 0) { ret = AVERROR_STREAM_NOT_FOUND; goto done; }
+    if (compatible && (video < 0 || in->streams[video]->codecpar->codec_id != AV_CODEC_ID_HEVC ||
+                       dolby_vision(in->streams[video]->codecpar))) {
+        ret = AVERROR_INVALIDDATA; goto done;
+    }
     if (video < 0) started = 1;
     ret = avformat_alloc_output_context2(&out, NULL, mp4 ? "mp4" : "matroska", output);
     if (ret < 0 || !out) { ret = ret < 0 ? ret : AVERROR(ENOMEM); goto done; }
@@ -126,7 +138,8 @@ static int transfer(MemoCapture *s, const char *url, const char *agent,
         mapping[i] = stream->index;
         ret = avcodec_parameters_copy(stream->codecpar, in->streams[i]->codecpar);
         if (ret < 0) goto done;
-        stream->codecpar->codec_tag = 0;
+        stream->codecpar->codec_tag = compatible && (int)i == video && stream->codecpar->codec_id == AV_CODEC_ID_HEVC
+            ? MKTAG('h','v','c','1') : 0;
         stream->time_base = in->streams[i]->time_base;
     }
     out->avoid_negative_ts = AVFMT_AVOID_NEG_TS_MAKE_ZERO;
@@ -170,6 +183,8 @@ static int transfer(MemoCapture *s, const char *url, const char *agent,
         ret = av_interleaved_write_frame(out, packet);
         av_packet_unref(packet);
         if (ret < 0) break;
+        if (size > 0 && index == video) video_packets++;
+        if (size > 0 && index == audio) audio_packets++;
         avio_flush(out->pb);
         atomic_fetch_add(&s->bytes, size); atomic_fetch_add(&s->packets, 1);
         if (media > atomic_load(&s->media_us)) atomic_store(&s->media_us, media);
@@ -188,13 +203,17 @@ done:
     else if (ret == AVERROR_EOF) ret = 0;
     if (ret >= 0 && trailer_ret < 0) ret = trailer_ret;
     if (ret >= 0 && !atomic_load(&s->packets)) ret = AVERROR_INVALIDDATA;
+    if (ret >= 0 && compatible && (!video_packets || (audio >= 0 && !audio_packets))) ret = AVERROR_INVALIDDATA;
     atomic_store(&s->phase, 5); return ret;
 }
 int memo_capture_run(MemoCapture *s, const char *url, const char *agent, const char *referer, const char *cookie, const char *output) {
-    return transfer(s, url, agent, referer, cookie, output, 0);
+    return transfer(s, url, agent, referer, cookie, output, 0, 0);
 }
 int memo_capture_mp4(MemoCapture *s, const char *input, const char *output) {
-    return transfer(s, input, "", "", "", output, 1);
+    return transfer(s, input, "", "", "", output, 1, 0);
+}
+int memo_capture_compat(MemoCapture *s, const char *input, const char *output) {
+    return transfer(s, input, "", "", "", output, 1, 1);
 }
 /* HLS AVURLAsset may expose an empty static tracks array even when its segments
  * contain audio. Inspect the real demuxed stream instead of treating it as mute.
@@ -274,7 +293,10 @@ int memo_capture_join(MemoCapture *s, const char *video_path, const char *audio_
         AVStream *dst = avformat_new_stream(out,NULL);
         if (!dst) { ret = AVERROR(ENOMEM); goto finish; }
         ret = avcodec_parameters_copy(dst->codecpar,in[i]->streams[index[i]]->codecpar); if (ret < 0) goto finish;
-        dst->codecpar->codec_tag = 0; dst->time_base = in[i]->streams[index[i]]->time_base;
+        dst->codecpar->codec_tag = i == 0 && dst->codecpar->codec_id == AV_CODEC_ID_HEVC &&
+            !dolby_vision(in[i]->streams[index[i]]->codecpar)
+            ? MKTAG('h','v','c','1') : 0;
+        dst->time_base = in[i]->streams[index[i]]->time_base;
     }
     out->avoid_negative_ts = AVFMT_AVOID_NEG_TS_MAKE_ZERO;
     out->flags |= AVFMT_FLAG_AUTO_BSF;

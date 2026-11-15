@@ -14,6 +14,7 @@ struct RecordingLibraryView:View {
     @State private var deleting = false
     @State private var pendingDelete: [URL] = []
     @State private var choosingFolder = false
+    @State private var choosingRepair = false
     @State private var exportFiles: [URL] = []
     @State private var exporting = false
     @State private var importing = false
@@ -34,6 +35,17 @@ struct RecordingLibraryView:View {
                         Spacer()
                         Button("下载队列",systemImage:"arrow.down.circle") { queue = true }.labelStyle(.iconOnly).font(.title3).frame(width:44,height:44)
                     }
+                    if let source = recorder.repairing {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("正在生成兼容副本").font(.subheadline.weight(.semibold))
+                                Text(source.lastPathComponent).font(.caption).lineLimit(1)
+                                Text("已处理 \(ByteCountFormatter.string(fromByteCount: recorder.repairBytes, countStyle: .file)) · 请保持应用打开").font(.caption2).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button(recorder.repairStopping ? "正在停止" : "停止") { recorder.cancelRepair() }.buttonStyle(.bordered).disabled(recorder.repairStopping)
+                        }.padding(14).glassCard(radius: 18)
+                    }
                     Picker("类型",selection:$category) { Text("全部").tag("全部"); Text("录像").tag("录像"); Text("图片").tag("图片") }.pickerStyle(.segmented)
                     if selecting { batchActions }
                     if files.isEmpty { ContentUnavailableView("收藏从这里开始",systemImage:"film.stack",description:Text("完成的直播录像、视频与图集会显示在这里。录制中的片段会在保存后出现。")) }
@@ -48,7 +60,8 @@ struct RecordingLibraryView:View {
                 ToolbarItemGroup(placement:.topBarTrailing) {
                     Button(selecting ? "完成" : "选择") { selecting.toggle(); if !selecting { selected = [] } }
                     Menu {
-                        Button("导入录像",systemImage:"square.and.arrow.down") { choosingFolder = false; importing = true }
+                        Button("导入录像",systemImage:"square.and.arrow.down") { choosingFolder = false; choosingRepair = false; importing = true }
+                        Button("选择 HEVC 视频兼容修复",systemImage:"wrench.and.screwdriver") { choosingFolder = false; choosingRepair = true; importing = true }.disabled(recorder.repairing != nil)
                         Button(grid ? "切换列表" : "切换网格",systemImage:grid ? "list.bullet" : "square.grid.3x3") { grid.toggle() }
                         if selecting { Button("全选当前结果") { selected = Set(files) } }
                     } label:{ Image(systemName:"ellipsis.circle") }
@@ -59,12 +72,13 @@ struct RecordingLibraryView:View {
                 ImageGalleryView(initial:item.url,files:files.filter { isImage($0) && $0.deletingLastPathComponent() == item.url.deletingLastPathComponent() }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending })
             }
             .sheet(isPresented:$queue) { DownloadQueueView() }
-            .fileImporter(isPresented:$importing,allowedContentTypes:choosingFolder ? [.folder] : [.movie,.data],allowsMultipleSelection:!choosingFolder) { result in
+            .fileImporter(isPresented:$importing,allowedContentTypes:choosingFolder ? [.folder] : [.movie,.data],allowsMultipleSelection:!choosingFolder && !choosingRepair) { result in
                 switch result {
                 case .success(let urls):
                     if choosingFolder { if let folder = urls.first { export(to:folder) } }
+                    else if choosingRepair { if let file = urls.first { recorder.repairHEVC(file) } }
                     else { for url in urls { recorder.importFile(url) } }
-                case .failure: recorder.message = choosingFolder ? "未能选择保存位置，请重试。" : "未能导入文件，请重试。"
+                case .failure: recorder.message = choosingFolder ? "未能选择保存位置，请重试。" : choosingRepair ? "未能选择需要修复的视频，请重试。" : "未能导入文件，请重试。"
                 }
             }
             .confirmationDialog("删除所选 \(pendingDelete.count) 个文件？",isPresented:$deleting,titleVisibility:.visible) {
@@ -88,7 +102,7 @@ struct RecordingLibraryView:View {
                 Menu {
                     Button("保存到相册",systemImage:"photo") { savePhotos(Array(selected)) }
                     Button("保存到文件…",systemImage:"folder") {
-                        exportFiles = selected.sorted { $0.path < $1.path }; choosingFolder = true; importing = true
+                        exportFiles = selected.sorted { $0.path < $1.path }; choosingRepair = false; choosingFolder = true; importing = true
                     }
                 } label:{ Label(exporting ? "保存中…" : "保存／下载",systemImage:"arrow.down.to.line") }
                 Spacer(minLength:4)
@@ -104,6 +118,7 @@ struct RecordingLibraryView:View {
         let targets = pendingDelete; pendingDelete = []
         var failed = Set<URL>()
         for file in targets {
+            if recorder.isLocked(file) { failed.insert(file); continue }
             let removed = LocalFiles.contains(file,in:recorder.directory) ? recorder.delete(file) : downloads.delete(file)
             if !removed { failed.insert(file) }
         }
@@ -145,9 +160,12 @@ struct RecordingLibraryView:View {
                 HStack(spacing:8) {
                     if file.pathExtension == "mkv" { Button("整理 MP4") { recorder.convertFile(file) } }
                     else { Button("相册") { savePhotos([file]) }.disabled(saving.contains(file) || exporting) }
+                    if file.pathExtension.lowercased() == "mp4" {
+                        Button("兼容修复") { recorder.repairHEVC(file) }.disabled(recorder.repairing != nil || recorder.isLocked(file))
+                    }
                     Spacer(minLength:0)
                     ShareLink(item:file) { Image(systemName:"square.and.arrow.up") }.accessibilityLabel("分享或保存到 Files")
-                    Button(role:.destructive) { requestDelete([file]) } label:{ Image(systemName:"trash") }.disabled(saving.contains(file) || exporting)
+                    Button(role:.destructive) { requestDelete([file]) } label:{ Image(systemName:"trash") }.disabled(saving.contains(file) || exporting || recorder.isLocked(file))
                 }.font(.caption).buttonStyle(.borderless)
             }
         }.padding(12).glassCard(radius:21)
