@@ -252,6 +252,7 @@ int memo_capture_join(MemoCapture *s, const char *video_path, const char *audio_
     AVFormatContext *in[2] = {NULL, NULL}, *out = NULL;
     AVPacket *packet[2] = {NULL, NULL};
     int index[2] = {-1,-1}, have[2] = {0,0}, ended[2] = {0,0};
+    int64_t track_packets[2] = {0,0};
     int ret = 0, header = 0, trailer = 0;
     const char *paths[2] = {video_path,audio_path};
     atomic_store(&s->phase, 1);
@@ -305,6 +306,7 @@ int memo_capture_join(MemoCapture *s, const char *video_path, const char *audio_
         av_packet_rescale_ts(p,src->time_base,dst->time_base); p->stream_index = use; p->pos = -1;
         ret = av_interleaved_write_frame(out,p); av_packet_unref(p); have[use] = 0;
         if (ret < 0) goto finish;
+        if (size > 0) track_packets[use]++;
         atomic_fetch_add(&s->bytes,size); atomic_fetch_add(&s->packets,1);
         atomic_store(&s->last_progress,av_gettime_relative());
     }
@@ -317,6 +319,6 @@ finish:
     if (atomic_load(&s->cancelled)) ret = AVERROR_EXIT;
     else if (s->timed_out) ret = AVERROR(ETIMEDOUT);
     if (ret >= 0 && trailer < 0) ret = trailer;
-    if (ret >= 0 && !atomic_load(&s->packets)) ret = AVERROR_INVALIDDATA;
+    if (ret >= 0 && (!track_packets[0] || !track_packets[1])) ret = AVERROR_INVALIDDATA;
     atomic_store(&s->phase,5); return ret;
 }
