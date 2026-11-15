@@ -129,6 +129,11 @@ try:
     result=run('join',root/'empty-video.mp4','join-empty-video.mp4',str(root/'audio.mp4'))
     check(result['code']<0 and (root/'empty-video.mp4').exists() and (root/'audio.mp4').exists(),
           'DASH join rejects an empty video track and preserves both inputs')
+    command('ffmpeg','-v','error','-y','-f','lavfi','-i','sine=frequency=440:sample_rate=48000',
+            '-frames:a','0','-c:a','aac','-movflags','+empty_moov+frag_keyframe',str(root/'empty-audio.mp4'))
+    result=run('join',root/'video.mp4','join-empty-audio.mp4',str(root/'empty-audio.mp4'))
+    check(result['code']<0 and (root/'video.mp4').exists() and (root/'empty-audio.mp4').exists(),
+          'DASH join rejects an empty audio track and preserves both inputs')
     print(json.dumps({'checks':checks,'status':'passed'}))
 finally:
     server.shutdown()
