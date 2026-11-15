@@ -122,6 +122,13 @@ try:
     check(run('join',root/'video.mp4','existing.mkv',str(root/'audio.mp4'))['code']<0 and (root/'existing.mkv').read_bytes()==sentinel, 'DASH join refuses existing output')
     check(run('join',root/'video.mp4','join-cancel.mp4',str(root/'audio.mp4'),cancel=-2)['code']<0 and (root/'video.mp4').read_bytes()==original, 'cancelled DASH join retains source tracks')
     check(run('join',root/'audio.mp4','wrong-track.mp4',str(root/'video.mp4'))['code']<0, 'DASH join rejects swapped or missing track types')
+    # A declared video track without samples must never be accepted just because
+    # the audio track has packets; the caller would then discard source files.
+    command('ffmpeg','-v','error','-y','-f','lavfi','-i','testsrc2=size=160x96:rate=10',
+            '-frames:v','0','-c:v','libx264','-movflags','+empty_moov+frag_keyframe',str(root/'empty-video.mp4'))
+    result=run('join',root/'empty-video.mp4','join-empty-video.mp4',str(root/'audio.mp4'))
+    check(result['code']<0 and (root/'empty-video.mp4').exists() and (root/'audio.mp4').exists(),
+          'DASH join rejects an empty video track and preserves both inputs')
     print(json.dumps({'checks':checks,'status':'passed'}))
 finally:
     server.shutdown()
