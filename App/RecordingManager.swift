@@ -18,6 +18,7 @@ final class NativeCapture: @unchecked Sendable {
         memo_capture_run(pointer, source.url, source.agent, source.referer, source.cookie, file.path)
     }
     func mp4(input: URL, output: URL) -> Int32 { memo_capture_mp4(pointer, input.path, output.path) }
+    func compatibleHEVC(input: URL, output: URL) -> Int32 { memo_capture_compat(pointer, input.path, output.path) }
     func join(video: URL, audio: URL, output: URL) -> Int32 { memo_capture_join(pointer, video.path, audio.path, output.path) }
     func probeAudio(_ source: Source) -> Int32 { memo_capture_probe_audio(pointer, source.url, source.agent, source.referer, source.cookie) }
     static func error(_ code: Int32) -> String {
@@ -59,6 +60,9 @@ final class RecordingManager: ObservableObject {
     @Published private(set) var listeningText = "当前未开启后台收听"
     @Published private(set) var filesVersion = 0
     @Published private(set) var conversions = Set<URL>()
+    @Published private(set) var repairing: URL?
+    @Published private(set) var repairBytes: Int64 = 0
+    @Published private(set) var repairStopping = false
     @Published var message: String?
     private var works: [String: Work] = [:]
     private var listenerRelay: HLSRelay?
@@ -71,6 +75,7 @@ final class RecordingManager: ObservableObject {
     private var listenProbe: NativeCapture?
     private var listenGeneration = UUID()
     private var manualHandles: [URL: NativeCapture] = [:]
+    private var repairTimer: Timer?
     private var timer: Timer?
     private var inBackground = false
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -82,6 +87,11 @@ final class RecordingManager: ObservableObject {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                 attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
+            // Only remove temporary files created by interrupted compatibility repairs.
+            let leftovers = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+            for file in leftovers where file.lastPathComponent.hasPrefix(".memo-repair-") && file.lastPathComponent.hasSuffix(".mp4.part") {
+                try? FileManager.default.removeItem(at: file)
+            }
         } catch { message = "录像目录无法创建：\(error.localizedDescription)" }
         playbackObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in
             let type = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
@@ -216,6 +226,44 @@ final class RecordingManager: ObservableObject {
             catch { message = "整理失败，原 MKV 已保留。" }
             conversions.remove(file); filesVersion += 1; updateBackgroundBudget()
         }
+    }
+    func repairHEVC(_ file: URL) {
+        guard repairing == nil else { message = "已有视频正在修复，请先等待或停止。"; return }
+        guard file.isFileURL, file.pathExtension.lowercased() == "mp4", !isLocked(file) else {
+            message = "请选择未被占用的 HEVC MP4 文件。"; return
+        }
+        let access = file.startAccessingSecurityScopedResource()
+        let id = UUID().uuidString
+        let temp = directory.appendingPathComponent(".memo-repair-\(id).mp4.part")
+        let name = String(file.deletingPathExtension().lastPathComponent.prefix(45))
+        let output = directory.appendingPathComponent("兼容-\(name)-\(id.prefix(8)).mp4")
+        conversions.insert(file); repairing = file; repairBytes = 0; repairStopping = false
+        updateBackgroundBudget()
+        Task {
+            defer {
+                if access { file.stopAccessingSecurityScopedResource() }
+                repairTimer?.invalidate(); repairTimer = nil; manualHandles.removeValue(forKey: file)
+                try? FileManager.default.removeItem(at: temp)
+                conversions.remove(file); repairing = nil; repairStopping = false; filesVersion += 1; updateBackgroundBudget()
+            }
+            do {
+                let handle = try NativeCapture(); manualHandles[file] = handle
+                if repairStopping { handle.cancel() }
+                repairTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self, weak handle] _ in
+                    Task { @MainActor in self?.repairBytes = handle?.progress().bytes ?? 0 }
+                }
+                let result = await Task.detached(priority: .utility) { handle.compatibleHEVC(input: file, output: temp) }.value
+                if result < 0 && repairStopping { message = "已停止兼容修复，原文件保留。"; return }
+                guard result >= 0 else { throw CocoaError(.fileReadCorruptFile) }
+                try FileManager.default.moveItem(at: temp, to: output)
+                message = "兼容副本已保存到录像页，原文件保留。请测试画面和声音；如果仍然黑屏，可能需要处理视频分辨率或其他格式问题。"
+            } catch {
+                message = "兼容修复未完成。请确认是普通 HEVC MP4、有足够空间，且处理时保持应用打开；原文件已保留。"
+            }
+        }
+    }
+    func cancelRepair() {
+        if let file = repairing { repairStopping = true; manualHandles[file]?.cancel() }
     }
     func files() -> [URL] {
         let urls = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []

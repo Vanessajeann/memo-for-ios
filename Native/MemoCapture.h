@@ -23,6 +23,9 @@ int memo_capture_probe_audio(MemoCapture *capture, const char *url, const char *
                              const char *referer, const char *cookie);
 /* Local files only. Input is always retained; caller publishes the output atomically. */
 int memo_capture_mp4(MemoCapture *capture, const char *input, const char *output);
+/* Copy a local non-Dolby-Vision HEVC file to a new MP4 using an hvc1 sample
+ * entry. No transcoding. The source is never modified or removed. */
+int memo_capture_compat(MemoCapture *capture, const char *input, const char *output);
 int memo_capture_join(MemoCapture *capture, const char *video, const char *audio, const char *output);
 void memo_capture_error(int code, char *buffer, size_t length);
 int memo_capture_retryable(int code);
